@@ -74,6 +74,8 @@ if [[ -z "$ADMIN_PASSWORD" ]]; then
   warn "Senha gerada automaticamente: $ADMIN_PASSWORD"
 fi
 
+EDGE_POSTGRES_ALLOWLIST="${EDGE_POSTGRES_ALLOWLIST:-}"
+
 # 3. Gerar .env
 if [[ ! -f .env ]]; then
   log "Gerando .env..."
@@ -101,6 +103,16 @@ if [[ ! -f .env ]]; then
   ok ".env gerado."
 else
   warn ".env já existe; mantendo."
+fi
+
+if [[ -n "$EDGE_POSTGRES_ALLOWLIST" ]]; then
+  log "Habilitando acesso do Postgres para balances: $EDGE_POSTGRES_ALLOWLIST"
+  if grep -q '"127.0.0.1:5432:5432"' docker-compose.yml; then
+    sed -i 's#"127.0.0.1:5432:5432"#"0.0.0.0:5432:5432"#g' docker-compose.yml
+    ok "Postgres exposto em 0.0.0.0:5432 (restrinja via firewall)"
+  else
+    warn "Não encontrei a porta 127.0.0.1:5432:5432 no docker-compose.yml (nada para alterar)"
+  fi
 fi
 
 # 4. Build + up
@@ -251,6 +263,18 @@ if command -v ufw >/dev/null 2>&1; then
   ufw allow OpenSSH >/dev/null 2>&1 || true
   ufw allow 80/tcp  >/dev/null 2>&1 || true
   ufw allow 443/tcp >/dev/null 2>&1 || true
+  if [[ -n "$EDGE_POSTGRES_ALLOWLIST" ]]; then
+    IFS=',' read -r -a edge_ips <<<"$EDGE_POSTGRES_ALLOWLIST"
+    for ip in "${edge_ips[@]}"; do
+      ip="$(echo "$ip" | xargs)"
+      [[ -z "$ip" ]] && continue
+      ufw allow from "$ip" to any port 5432 proto tcp >/dev/null 2>&1 || true
+    done
+    ufw deny 5432/tcp >/dev/null 2>&1 || true
+  fi
+  if ufw status 2>/dev/null | grep -qi inactive; then
+    ufw --force enable >/dev/null 2>&1 || true
+  fi
 fi
 
 PUB_URL="${DOMAIN:+https://$DOMAIN}"
