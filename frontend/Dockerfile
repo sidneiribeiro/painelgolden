@@ -33,6 +33,8 @@ FROM nginx:alpine AS runner
 # Remove config padrão do nginx
 RUN rm /etc/nginx/conf.d/default.conf
 
+RUN apk add --no-cache curl
+
 # Copia configuração customizada
 COPY nginx.conf /etc/nginx/conf.d/
 
@@ -44,6 +46,6 @@ EXPOSE 80 443
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost/ || exit 1
+  CMD curl -fsS http://localhost/ >/dev/null || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]
