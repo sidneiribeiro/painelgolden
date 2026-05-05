@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0ea5e9" />
+    <meta name="description" content="Painel de Revenda IPTV - Gerencie seus clientes com facilidade" />
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Orbitron:wght@400;500;600;700;800;900&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <title>Painel IPTV</title>
+    <script type="module" crossorigin src="/assets/index-TKzUuqwA.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BiUbREr2.css">
+  </head>
+  <body class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-white antialiased">
+    <div id="root">
+      <div style="display: flex; align-items: center; justify-content: center; min-height: 100vh; background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%); color: white; font-family: 'Outfit', sans-serif;">
+        <div style="text-align: center; position: relative;">
+          <!-- Logo/Ícone animado -->
+          <div style="margin-bottom: 2rem; position: relative; display: inline-block;">
+            <div style="width: 80px; height: 80px; border: 4px solid rgba(14, 165, 233, 0.3); border-top-color: #0ea5e9; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto;"></div>
+            <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 32px; margin-top: -2px;">📺</div>
+          </div>
+          
+          <!-- Texto com animação -->
+          <div style="font-size: 24px; font-weight: 600; margin-bottom: 0.5rem; background: linear-gradient(90deg, #0ea5e9, #3b82f6, #8b5cf6); background-size: 200% auto; -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; animation: gradient 2s ease infinite;">
+            Painel IPTV Master
+          </div>
+          <div style="font-size: 14px; color: #94a3b8; font-weight: 400;">
+            Carregando...
+          </div>
+          
+          <!-- Pontos animados -->
+          <div style="display: flex; justify-content: center; gap: 6px; margin-top: 1.5rem;">
+            <div style="width: 8px; height: 8px; background: #0ea5e9; border-radius: 50%; animation: bounce 1.4s ease-in-out infinite both;"></div>
+            <div style="width: 8px; height: 8px; background: #3b82f6; border-radius: 50%; animation: bounce 1.4s ease-in-out 0.2s infinite both;"></div>
+            <div style="width: 8px; height: 8px; background: #8b5cf6; border-radius: 50%; animation: bounce 1.4s ease-in-out 0.4s infinite both;"></div>
+          </div>
+        </div>
+      </div>
+      
+      <style>
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        
+        @keyframes gradient {
+          0%, 100% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+        }
+        
+        @keyframes bounce {
+          0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; }
+          40% { transform: scale(1.2); opacity: 1; }
+        }
+      </style>
+    </div>
+  </body>
+</html>

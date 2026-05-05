@@ -1,0 +1,618 @@
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Card, Badge, Spinner, Button, Modal } from '../components/ui';
+import { api } from '../api/client';
+import { useAuthStore } from '../store/authStore';
+import toast from 'react-hot-toast';
+
+interface DashboardData {
+  stats: {
+    total_lines: number;
+    active_lines: number;
+    expired_lines: number;
+    trials_today: number;
+    expiring_soon: number;
+  };
+  recentCustomers: Array<{
+    id: string;
+    username: string;
+    status: string;
+    expires_at: string;
+    days_until_expiry: number;
+  }>;
+  expiringCustomers: Array<{
+    id: string;
+    username: string;
+    expires_at: string;
+    days_until_expiry: number;
+  }>;
+}
+
+export function DashboardPage() {
+  const user = useAuthStore((state) => state.user);
+  const queryClient = useQueryClient();
+  const [quickTestModalOpen, setQuickTestModalOpen] = useState(false);
+  const [testResultModalOpen, setTestResultModalOpen] = useState(false);
+  const [selectedTemplateType, setSelectedTemplateType] = useState<'complete' | 'xciptv' | 'simple' | null>(null);
+  const [testHours, setTestHours] = useState(6);
+  const [testResult, setTestResult] = useState<any>(null);
+  const [selectedQuickTestPkgId, setSelectedQuickTestPkgId] = useState<string>('');
+
+  // Busca dados do dashboard
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['dashboard'],
+    queryFn: async () => {
+      const res = await api.get('/dashboard');
+      return res.data.data as DashboardData;
+    },
+    refetchInterval: 60000, // Atualiza a cada 1 minuto
+  });
+
+  // Busca pacotes disponíveis
+  const { data: packagesData } = useQuery({
+    queryKey: ['packages-for-select'],
+    queryFn: async () => {
+      const res = await api.get('/packages-local/for-select');
+      return res.data.data;
+    },
+  });
+
+  // Busca pacotes marcados para exibir no dashboard (para teste rápido)
+  const { data: trialPackagesData } = useQuery({
+    queryKey: ['dashboard-packages'],
+    queryFn: async () => {
+      const res = await api.get('/packages-local?showOnDashboard=true&isActive=true');
+      return res.data.data as Array<{
+        id: string;
+        name: string;
+        serverId: string;
+        isTrial: boolean;
+        template?: string;
+        templateXciptv?: string;
+        templateSimple?: string;
+        server?: { id: string; name: string };
+      }>;
+    },
+  });
+
+  // Criar teste rápido
+  const quickTestMutation = useMutation({
+    mutationFn: async ({ hours, templateType, packageId }: { hours: number; templateType: 'complete' | 'xciptv' | 'simple'; packageId?: string }) => {
+      if (!trialPackagesData || trialPackagesData.length === 0) {
+        throw new Error('Nenhum pacote disponível para teste. Marque "Exibir no Dashboard" em um pacote.');
+      }
+      
+      const pkg = packageId 
+        ? trialPackagesData.find(p => p.id === packageId) || trialPackagesData[0]
+        : trialPackagesData[0];
+      const payload: any = {
+        server_id: pkg.serverId,
+        package_id: pkg.id,
+        trial_hours: hours,
+        connections: 1,
+        template_type: templateType,
+      };
+      
+      const res = await api.post('/customers', payload);
+      return res.data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['customers'] });
+      toast.success('Teste criado com sucesso!');
+      setQuickTestModalOpen(false);
+      setSelectedTemplateType(null);
+      // Mostrar modal com resultado
+      setTestResult(data.data);
+      setTestResultModalOpen(true);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao criar teste');
+    },
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-6">
+        <Card className="p-8 text-center">
+          <p className="text-red-400">Erro ao carregar dados do dashboard</p>
+          <p className="text-sm text-zinc-500 mt-2">
+            Verifique se o servidor XUI está configurado corretamente.
+          </p>
+        </Card>
+      </div>
+    );
+  }
+
+  const stats = data?.stats || {
+    total_lines: 0,
+    active_lines: 0,
+    expired_lines: 0,
+    trials_today: 0,
+    expiring_soon: 0,
+  };
+
+  return (
+    <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-xl lg:text-2xl font-bold text-zinc-900 dark:text-white">Dashboard</h1>
+          <p className="text-zinc-600 dark:text-zinc-400 text-sm lg:text-base mt-1">Bem-vindo, {user?.name || user?.username}!</p>
+        </div>
+        <div className="bg-zinc-100 dark:bg-zinc-800/50 rounded-lg px-4 py-2 flex items-center gap-3 self-start">
+          {user?.billingType === 'POSTPAID' ? (
+            <>
+              <span className="text-zinc-600 dark:text-zinc-400 text-sm">Vencimento:</span>
+              <span className="text-blue-600 dark:text-cyan-400 text-xl font-bold">
+                {user?.dueDate 
+                  ? new Date(user.dueDate).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+                  : 'Não definido'}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="text-zinc-600 dark:text-zinc-400 text-sm">Créditos:</span>
+              <span className="text-blue-600 dark:text-cyan-400 text-xl font-bold">{user?.credits || 0}</span>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-2 gap-3 lg:gap-4 lg:grid-cols-4">
+        <StatCard
+          title="Total de Clientes"
+          value={stats.total_lines}
+          icon="👥"
+          color="cyan"
+        />
+        <StatCard
+          title="Clientes Ativos"
+          value={stats.active_lines}
+          icon="✅"
+          color="green"
+        />
+        <StatCard
+          title="Expirados"
+          value={stats.expired_lines}
+          icon="⏰"
+          color="red"
+        />
+        <StatCard
+          title="Vencendo em 7 dias"
+          value={stats.expiring_soon}
+          icon="⚠️"
+          color="yellow"
+        />
+      </div>
+
+      {/* Gerar Testes Rápidos - MOVIDO PARA AQUI */}
+      {trialPackagesData && trialPackagesData.length > 0 && (
+        <Card className="p-4 lg:p-5">
+          <h3 className="text-base lg:text-lg font-semibold text-zinc-900 dark:text-white mb-3 lg:mb-4">🚀 Gerar Teste Rápido</h3>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
+            Crie testes automaticamente usando os templates configurados nos pacotes
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <Button
+              onClick={() => {
+                setSelectedTemplateType('complete');
+                setQuickTestModalOpen(true);
+              }}
+              className="bg-gradient-to-r from-cyan-500 to-purple-500 hover:from-cyan-600 hover:to-purple-600"
+            >
+              📺 Teste Completo
+            </Button>
+            <Button
+              onClick={() => {
+                setSelectedTemplateType('xciptv');
+                setQuickTestModalOpen(true);
+              }}
+              className="bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600"
+            >
+              📱 Teste XCIPTV
+            </Button>
+            <Button
+              onClick={() => {
+                setSelectedTemplateType('simple');
+                setQuickTestModalOpen(true);
+              }}
+              className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600"
+            >
+              🎬 Teste App Parceiro
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {/* Grid de conteúdo */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Clientes vencendo */}
+        <Card className="p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">⚠️ Vencendo em Breve</h3>
+            <Badge variant="warning">{data?.expiringCustomers?.length || 0}</Badge>
+          </div>
+
+          {data?.expiringCustomers && data.expiringCustomers.length > 0 ? (
+            <div className="space-y-3">
+              {data.expiringCustomers.slice(0, 5).map((customer) => (
+                <div
+                  key={customer.id}
+                  className="flex items-center justify-between p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg border border-zinc-200 dark:border-zinc-700"
+                >
+                  <div>
+                    <p className="text-zinc-900 dark:text-white font-mono">{customer.username}</p>
+                    <p className="text-xs text-zinc-600 dark:text-zinc-500">
+                      {new Date(customer.expires_at).toLocaleDateString('pt-BR', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        timeZone: 'America/Sao_Paulo',
+                      })}
+                    </p>
+                  </div>
+                  <Badge
+                    variant={
+                      customer.days_until_expiry <= 1
+                        ? 'error'
+                        : customer.days_until_expiry <= 3
+                        ? 'warning'
+                        : 'default'
+                    }
+                  >
+                    {customer.days_until_expiry}d
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-zinc-600 dark:text-zinc-500 text-center py-6">
+              Nenhum cliente vencendo nos próximos 7 dias 🎉
+            </p>
+          )}
+        </Card>
+
+        {/* Pacotes disponíveis */}
+        <Card className="p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">📦 Pacotes Disponíveis</h3>
+            <Badge variant="default">{packagesData?.length || 0}</Badge>
+          </div>
+
+          {packagesData && packagesData.length > 0 ? (
+            <div className="space-y-3">
+              {packagesData.slice(0, 5).map((pkg: any) => (
+                <div
+                  key={pkg.value}
+                  className="flex items-center justify-between p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg border border-zinc-200 dark:border-zinc-700"
+                >
+                  <div>
+                    <p className="text-zinc-900 dark:text-white">{pkg.label}</p>
+                    <p className="text-xs text-zinc-600 dark:text-zinc-500">{pkg.serverName}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-blue-600 dark:text-cyan-400 font-medium">{pkg.credits} créditos</p>
+                    <p className="text-xs text-green-600 dark:text-green-400">
+                      R$ {(pkg.planPrice / 100).toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-zinc-600 dark:text-zinc-500 text-center py-6">
+              Nenhum pacote configurado. Sincronize do XUI primeiro.
+            </p>
+          )}
+        </Card>
+      </div>
+
+      {/* Modal Gerar Teste Rápido */}
+      <Modal
+        isOpen={quickTestModalOpen}
+        onClose={() => {
+          setQuickTestModalOpen(false);
+          setSelectedTemplateType(null);
+        }}
+        title={`🧪 Gerar Teste ${selectedTemplateType === 'complete' ? 'Completo' : selectedTemplateType === 'xciptv' ? 'XCIPTV' : 'Simples'}`}
+      >
+        <div className="space-y-4">
+          {/* Selecionar pacote */}
+          {trialPackagesData && trialPackagesData.length > 1 && (
+            <div>
+              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">Pacote</label>
+              <select
+                value={selectedQuickTestPkgId || trialPackagesData[0]?.id || ''}
+                onChange={(e) => setSelectedQuickTestPkgId(e.target.value)}
+                className="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg text-zinc-900 dark:text-white text-sm"
+              >
+                {trialPackagesData.map((pkg) => (
+                  <option key={pkg.id} value={pkg.id}>
+                    {pkg.name} {pkg.server?.name ? `(${pkg.server.name})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">Duração do Teste</label>
+            <div className="flex gap-2 flex-wrap">
+              {[3, 6, 12, 24].map((hours) => (
+                <button
+                  key={hours}
+                  type="button"
+                  onClick={() => setTestHours(hours)}
+                  className={`flex-1 py-3 rounded-lg text-sm font-medium transition-colors ${
+                    testHours === hours
+                      ? 'bg-blue-600 dark:bg-cyan-500 text-white'
+                      : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-400 hover:bg-zinc-300 dark:hover:bg-zinc-700'
+                  }`}
+                >
+                  {hours}h
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-4">
+            <p className="text-sm text-blue-700 dark:text-blue-300">
+              <strong>Template usado:</strong>{' '}
+              {selectedTemplateType === 'complete'
+                ? 'Template Completo do pacote'
+                : selectedTemplateType === 'xciptv'
+                ? 'Template XCIPTV do pacote'
+                : 'Template Aplicativo Parceiro do pacote'}
+            </p>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4 border-t border-zinc-200 dark:border-zinc-700">
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setQuickTestModalOpen(false);
+                setSelectedTemplateType(null);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => {
+                if (selectedTemplateType) {
+                  quickTestMutation.mutate({ 
+                    hours: testHours, 
+                    templateType: selectedTemplateType,
+                    packageId: selectedQuickTestPkgId || trialPackagesData?.[0]?.id,
+                  });
+                }
+              }}
+              loading={quickTestMutation.isPending}
+            >
+              🚀 Gerar Teste
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal Resultado do Teste */}
+      {testResult && (
+        <Modal
+          isOpen={testResultModalOpen}
+          onClose={() => {
+            setTestResultModalOpen(false);
+            setTestResult(null);
+          }}
+          title="✅ Teste Criado com Sucesso!"
+          size="lg"
+        >
+          <TestResultContent
+            testResult={testResult}
+            onClose={() => {
+              setTestResultModalOpen(false);
+              setTestResult(null);
+            }}
+          />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// Componente para exibir resultado do teste
+function TestResultContent({ testResult, onClose }: { testResult: any; onClose: () => void }) {
+  const copyToClipboard = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(`${label} copiado!`);
+    } catch (err) {
+      // Fallback para navegadores antigos
+      try {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        toast.success(`${label} copiado!`);
+      } catch {
+        toast.error('Erro ao copiar');
+      }
+    }
+  };
+
+  const formatDate = (dateStr: string) => {
+    try {
+      return new Date(dateStr).toLocaleString('pt-BR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: 'America/Sao_Paulo',
+      });
+    } catch (e) {
+      return '-';
+    }
+  };
+
+  const template = testResult.playlist || `📺 *ACESSO IPTV CRIADO COM SUCESSO!*
+
+👤 *Usuário:* ${testResult.username}
+🔑 *Senha:* ${testResult.password}
+
+📱 *Para XCIPTV/Smarters:*
+🌐 DNS: ${testResult.dns || 'Não configurado'}
+👤 Usuário: ${testResult.username}
+🔑 Senha: ${testResult.password}
+
+${testResult.urls?.m3u_ts ? `🔗 *Link M3U:*
+${testResult.urls.m3u_ts}
+
+` : ''}📅 *Vencimento:* ${formatDate(testResult.expiresAt)}
+📶 *Conexões:* ${testResult.connections || 1}
+
+⚠️ *Importante:* Não compartilhe suas credenciais!`;
+
+  return (
+    <div className="space-y-4">
+      {/* Banner de Sucesso */}
+      <div className="bg-gradient-to-r from-green-500/20 to-cyan-500/20 rounded-lg p-4 border border-green-500/30">
+        <p className="text-center text-green-400 font-semibold">
+          🎉 Teste criado com sucesso!
+        </p>
+      </div>
+
+      {/* Dados de Acesso */}
+      <div className="bg-zinc-100 dark:bg-zinc-800/50 rounded-lg p-4 border border-zinc-300 dark:border-zinc-700">
+        <h3 className="text-lg font-semibold text-zinc-900 dark:text-white mb-3 flex items-center gap-2">
+          📺 Dados de Acesso
+        </h3>
+        <div className="space-y-3">
+          <div className="bg-gradient-to-r from-cyan-500/20 to-purple-500/20 rounded-lg p-4 text-center">
+            <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-1">👤 Usuário</p>
+            <p className="text-2xl font-mono font-bold text-zinc-900 dark:text-white mb-3">
+              {testResult.username}
+            </p>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-1">🔑 Senha</p>
+            <p className="text-xl font-mono text-zinc-700 dark:text-zinc-300">{testResult.password}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Botões de Ação */}
+      <div className="flex flex-col gap-2 pt-2 border-t border-zinc-200 dark:border-zinc-700">
+        <Button
+          className="w-full bg-green-600 hover:bg-green-700 text-white"
+          onClick={() => {
+            copyToClipboard(template, 'Template completo');
+            // Tentar abrir WhatsApp nativo primeiro, depois WhatsApp Web
+            const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(template)}`;
+            const whatsappNativeUrl = `whatsapp://send?text=${encodeURIComponent(template)}`;
+            
+            // Criar link temporário para tentar abrir WhatsApp nativo
+            const link = document.createElement('a');
+            link.href = whatsappNativeUrl;
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            
+            try {
+              link.click();
+              // Se não abrir em 500ms, tenta WhatsApp Web
+              setTimeout(() => {
+                window.open(whatsappUrl, '_blank');
+              }, 500);
+            } catch (e) {
+              // Fallback para WhatsApp Web
+              window.open(whatsappUrl, '_blank');
+            } finally {
+              document.body.removeChild(link);
+            }
+          }}
+        >
+          📱 Copiar Template e Abrir WhatsApp
+        </Button>
+
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            variant="outline"
+            onClick={() => {
+              copyToClipboard(template, 'Template completo');
+            }}
+          >
+            📋 Copiar Template
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              const text = `👤 Usuário: ${testResult.username}\n🔑 Senha: ${testResult.password}`;
+              copyToClipboard(text, 'Credenciais');
+            }}
+          >
+            🔑 Copiar Credenciais
+          </Button>
+        </div>
+
+        <Button
+          variant="ghost"
+          className="w-full"
+          onClick={onClose}
+        >
+          Fechar
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// Componente de estatística
+function StatCard({
+  title,
+  value,
+  icon,
+  color,
+}: {
+  title: string;
+  value: number;
+  icon: string;
+  color: 'cyan' | 'green' | 'red' | 'yellow';
+}) {
+  const colorClasses = {
+    cyan: 'from-cyan-500/20 to-cyan-500/5 border-cyan-500/30',
+    green: 'from-green-500/20 to-green-500/5 border-green-500/30',
+    red: 'from-red-500/20 to-red-500/5 border-red-500/30',
+    yellow: 'from-yellow-500/20 to-yellow-500/5 border-yellow-500/30',
+  };
+
+  const textClasses = {
+    cyan: 'text-cyan-400',
+    green: 'text-green-400',
+    red: 'text-red-400',
+    yellow: 'text-yellow-400',
+  };
+
+  return (
+    <Card
+      className={`p-3 lg:p-5 bg-gradient-to-br ${colorClasses[color]} border ${colorClasses[color]}`}
+    >
+      <div className="flex items-center justify-between mb-2 lg:mb-3">
+        <span className="text-xl lg:text-2xl">{icon}</span>
+        <span className={`text-2xl lg:text-3xl font-bold ${textClasses[color]}`}>{value}</span>
+      </div>
+      <p className="text-xs lg:text-sm text-zinc-400 truncate">{title}</p>
+    </Card>
+  );
+}
+
+export default DashboardPage;

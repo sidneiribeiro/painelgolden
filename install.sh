@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+# PainelMaster — instalador oficial (Ubuntu 20.04/22.04/24.04 ou Debian 11/12)
+# Uso:
+#   sudo bash install.sh                                   # interativo
+#   sudo DOMAIN=x.com EMAIL=y@z.com bash install.sh --ssl  # automático com SSL
+# Flags: --non-interactive  --ssl  --no-nginx
+set -euo pipefail
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
+log()  { echo -e "${BLUE}ℹ  $*${NC}"; }
+ok()   { echo -e "${GREEN}✔  $*${NC}"; }
+warn() { echo -e "${YELLOW}⚠  $*${NC}"; }
+err()  { echo -e "${RED}✘  $*${NC}" >&2; }
+
+NON_INTERACTIVE=0; ENABLE_SSL=0; SKIP_NGINX=0
+for arg in "$@"; do
+  case "$arg" in
+    --non-interactive) NON_INTERACTIVE=1 ;;
+    --ssl) ENABLE_SSL=1 ;;
+    --no-nginx) SKIP_NGINX=1 ;;
+  esac
+done
+
+[[ $EUID -eq 0 ]] || { err "Execute como root (sudo bash install.sh)."; exit 1; }
+cd "$(dirname "$(readlink -f "$0")")"
+
+cat <<'BANNER'
+╔═══════════════════════════════════════════════════════════════╗
+║              PainelMaster — Instalador Oficial                ║
+╚═══════════════════════════════════════════════════════════════╝
+BANNER
+
+# 1. Dependências de sistema
+log "Atualizando pacotes do sistema..."
+apt-get update -y
+apt-get install -y curl ca-certificates gnupg lsb-release ufw openssl
+
+if ! command -v docker >/dev/null 2>&1; then
+  log "Instalando Docker Engine..."
+  install -m 0755 -d /etc/apt/keyrings
+  . /etc/os-release
+  curl -fsSL "https://download.docker.com/linux/${ID}/gpg" -o /etc/apt/keyrings/docker.asc
+  chmod a+r /etc/apt/keyrings/docker.asc
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/${ID} ${VERSION_CODENAME} stable" > /etc/apt/sources.list.d/docker.list
+  apt-get update -y
+  apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  ok "Docker instalado"
+else
+  ok "Docker presente ($(docker --version))"
+fi
+systemctl enable --now docker
+
+# 2. Perguntas interativas
+read_var() {
+  local var="$1" prompt="$2" default="${3:-}"; local current; current="${!var-}"
+  [[ -n "$current" ]] && return
+  if [[ $NON_INTERACTIVE -eq 1 ]]; then printf -v "$var" '%s' "$default"; return; fi
+  if [[ -n "$default" ]]; then
+    read -r -p "$prompt [$default]: " value; value="${value:-$default}"
+  else
+    read -r -p "$prompt: " value
+  fi
+  printf -v "$var" '%s' "$value"
+}
+
+read_var DOMAIN         "Domínio público (ex.: painel.cliente.com)" ""
+read_var EMAIL          "Email para Let's Encrypt" ""
+read_var ADMIN_USERNAME "Usuário SUPER_ADMIN inicial" "admin"
+read_var ADMIN_EMAIL    "Email do SUPER_ADMIN" "admin@${DOMAIN:-painelmaster.local}"
+read_var ADMIN_PASSWORD "Senha SUPER_ADMIN (enter = aleatória)" ""
+
+if [[ -z "$ADMIN_PASSWORD" ]]; then
+  ADMIN_PASSWORD="$(openssl rand -base64 16 | tr -d '=+/' | cut -c1-16)"
+  warn "Senha gerada automaticamente: $ADMIN_PASSWORD"
+fi
+
+# 3. Gerar .env
+if [[ ! -f .env ]]; then
+  log "Gerando .env..."
+  cp .env.example .env
+
+  POSTGRES_PW="$(openssl rand -hex 16)"
+  JWT1="$(openssl rand -hex 32)"
+  JWT2="$(openssl rand -hex 32)"
+  ENC_KEY="$(openssl rand -hex 16)"
+
+  sed -i "s#TROQUE_POSTGRES_PASS#${POSTGRES_PW}#g" .env
+  awk -v j1="$JWT1" -v j2="$JWT2" '
+    /^JWT_SECRET=TROQUE/          { print "JWT_SECRET=" j1; next }
+    /^JWT_REFRESH_SECRET=TROQUE/  { print "JWT_REFRESH_SECRET=" j2; next }
+    { print }' .env > .env.tmp && mv .env.tmp .env
+  sed -i "s#TROQUE_32_CHARS_EXATOS_0123456789#${ENC_KEY}#g" .env
+  sed -i "s#TROQUE_NO_PRIMEIRO_LOGIN#${ADMIN_PASSWORD}#g"   .env
+  sed -i "s#SEED_ADMIN_USERNAME=admin#SEED_ADMIN_USERNAME=${ADMIN_USERNAME}#g" .env
+  sed -i "s#admin@seudominio.com#${ADMIN_EMAIL}#g" .env
+
+  if [[ -n "$DOMAIN" ]]; then
+    sed -i "s#painel.seudominio.com#${DOMAIN}#g" .env
+  fi
+  chmod 600 .env
+  ok ".env gerado."
+else
+  warn ".env já existe; mantendo."
+fi
+
+# 4. Build + up
+log "Buildando imagens Docker (pode demorar na primeira vez)..."
+docker compose build
+log "Subindo stack..."
+docker compose up -d
+
+log "Aguardando backend ficar saudável..."
+for i in {1..60}; do
+  if curl -sf http://127.0.0.1:3001/api/health >/dev/null 2>&1; then
+    ok "Backend respondeu em /api/health"
+    break
+  fi
+  sleep 2
+done
+
+# 5. Nginx do host
+if [[ $SKIP_NGINX -eq 0 ]]; then
+  log "Configurando nginx..."
+  apt-get install -y nginx
+  SERVER_NAME="${DOMAIN:-_}"
+  cat > /etc/nginx/sites-available/painelmaster <<NGINX
+map \$http_upgrade \$connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 80 default_server;
+    server_name ${SERVER_NAME};
+    client_max_body_size 100M;
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+    location ^~ /api {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_read_timeout 300s;
+    }
+    location = /get.php {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+    }
+    location = /player_api.php {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+    }
+    location = /panel_api.php {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+    }
+    location = /xmltv.php {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+    }
+    location ^~ /hls/ {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+    location ^~ /live/ {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+    location ^~ /timeshift/ {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+    location ^~ /movie/ {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+    location ^~ /series/ {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+    location ^~ /storage {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+    }
+    location ^~ /uploads {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+    }
+    location ^~ /socket.io {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$connection_upgrade;
+        include /etc/nginx/proxy_params;
+    }
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        include /etc/nginx/proxy_params;
+    }
+    location ~ /\. { deny all; }
+}
+NGINX
+  ln -sf /etc/nginx/sites-available/painelmaster /etc/nginx/sites-enabled/painelmaster
+  rm -f /etc/nginx/sites-enabled/default
+  nginx -t && systemctl reload nginx
+  ok "nginx configurado"
+
+  if [[ $ENABLE_SSL -eq 1 && -n "$DOMAIN" && -n "$EMAIL" ]]; then
+    log "Emitindo certificado Let's Encrypt..."
+    apt-get install -y certbot python3-certbot-nginx
+    certbot --nginx --non-interactive --agree-tos -m "$EMAIL" -d "$DOMAIN" --redirect || warn "Certbot falhou — rode manualmente depois."
+  fi
+fi
+
+# 6. UFW
+if command -v ufw >/dev/null 2>&1; then
+  ufw allow OpenSSH >/dev/null 2>&1 || true
+  ufw allow 80/tcp  >/dev/null 2>&1 || true
+  ufw allow 443/tcp >/dev/null 2>&1 || true
+fi
+
+PUB_URL="${DOMAIN:+https://$DOMAIN}"
+PUB_URL="${PUB_URL:-http://$(curl -s ifconfig.me 2>/dev/null || echo 'SEU-IP')}"
+
+echo
+ok "Instalação concluída."
+echo
+echo "  URL:       $PUB_URL"
+echo "  Admin:     $ADMIN_USERNAME"
+echo "  Senha:     $ADMIN_PASSWORD"
+echo
+echo "  Logs:      docker compose logs -f backend"
+echo "  Update:    git pull && docker compose up -d --build"
+echo "  Parar:     docker compose down"
+echo

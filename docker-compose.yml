@@ -1,0 +1,83 @@
+# PainelMaster — stack de produção
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: painelmaster-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-painelmaster}
+      POSTGRES_USER: ${POSTGRES_USER:-painel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks: [painel-network]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-painel} -d ${POSTGRES_DB:-painelmaster}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: painelmaster-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks: [painel-network]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: painelmaster-backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: ${DATABASE_URL}
+      TZ: ${TZ:-America/Sao_Paulo}
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - ./backend/public/uploads:/app/public/uploads
+      - painel_storage:/app/storage
+    networks: [painel-network]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-/api}
+        VITE_APP_NAME: ${VITE_APP_NAME:-PainelMaster}
+        VITE_LANDING_HOSTNAME: ${VITE_LANDING_HOSTNAME:-}
+        VITE_ENABLE_XUIONE: ${VITE_ENABLE_XUIONE:-false}
+    container_name: painelmaster-frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:80"
+    networks: [painel-network]
+    depends_on: [backend]
+
+networks:
+  painel-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  painel_storage:

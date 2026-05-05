@@ -1,0 +1,1278 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model XuiServer {
+  id                  String              @id @default(uuid())
+  name                String
+  baseUrl             String
+  serverType          String              @default("XUIONE")
+  accessCode          String
+  apiKey              String
+  apiUsername          String?
+  apiPassword         String?
+  dnsPrimary          String?
+  dnsList             String?
+  defaultTemplate     String?
+  isActive            Boolean             @default(true)
+  isDefault           Boolean             @default(false)
+  status              String              @default("OFFLINE")
+  lastSync            DateTime?
+  lastCheck           DateTime?
+  xuiResellerId       Int?
+  xuiResellerUsername String?
+  xuiResellerApiKey   String?
+  dbHost              String?
+  dbPort              Int                 @default(3306)
+  dbName              String?             @default("xui")
+  dbUser              String?
+  dbPassword          String?
+  sshHost             String?
+  sshPort             Int                 @default(22)
+  sshUser             String?
+  sshPassword         String?
+  sshKey              String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  bouquets            Bouquet[]
+  customers           Customer[]
+  packages            Package[]
+  checkouts           Checkout[]
+  footballConfig      FootballConfig?
+  premiumPlans        PremiumPlan[]
+  premiumSources      PremiumSource[]
+  vodImportSchedules  VODImportSchedule[]
+  vodItems            VODItem[]
+
+  @@unique([baseUrl, accessCode])
+}
+
+model User {
+  id                   String                @id @default(uuid())
+  username             String                @unique
+  email                String                @unique
+  password             String
+  name                 String?
+  whatsapp             String?
+  telegram             String?
+  role                 String                @default("RESELLER")
+  status               String                @default("ACTIVE")
+  credits              Int                   @default(0)
+  creditsReadonly      Boolean               @default(false)
+  billingType          String                @default("PREPAID")
+  dueDate              DateTime?
+  customerPrice        Decimal?              @db.Decimal(10, 2)
+  billingCycleDays     Int                   @default(30)
+  isBlockedByBilling   Boolean               @default(false)
+  parentId             String?
+  accessGroupId        String?
+  canCreateResellers   Boolean               @default(false)
+  maxSubResellers      Int?
+  commissionPercent    Float                 @default(0)
+  maxTrialsPerDay      Int?
+  maxCustomers         Int?
+  trialHoursAllowed    String                @default("3,6,12,24")
+  allowedPackages      String?
+  allowedServers       String?
+  menuPermissions      String?               @db.Text
+  refreshToken         String?               @db.Text
+  lastLoginAt          DateTime?
+  lastLoginIp          String?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  actionLogs           ActionLog[]
+  creditTransactions   CreditTransaction[]
+  customers            Customer[]
+  notificationLogs     NotificationLog[]
+  notificationSettings NotificationSettings?
+  parent               User?                 @relation("UserHierarchy", fields: [parentId], references: [id])
+  children             User[]                @relation("UserHierarchy")
+  accessGroup          AccessGroup?          @relation(fields: [accessGroupId], references: [id], onDelete: SetNull)
+  asaasConfig          AsaasConfig?
+  panelSettings        PanelSettings?
+  premiumSources       PremiumSource[]
+  ownedPackages        Package[]             @relation("PackageOwner")
+  createdAccessGroups  AccessGroup[]         @relation("AccessGroupCreator")
+  coreStreams           CoreStream[]
+  coreEdgeServers       CoreEdgeServer[]
+  coreBouquets          CoreBouquet[]
+  corePackages          CorePackage[]
+  coreLines             CoreLine[]
+  corePayments          CorePayment[]
+  coreVodItems          CoreVodItem[]
+  coreSeries            CoreSeries[]
+  coreM3USchedules      CoreM3USchedule[]
+  coreEpgSources        CoreEpgSource[]
+  coreEpgChannels       CoreEpgChannel[]
+  coreEpgPrograms       CoreEpgProgram[]
+}
+
+model AccessGroup {
+  id             String   @id @default(uuid())
+  name           String   @unique
+  description    String?
+  menuPermissions String? @db.Text
+  createdById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  createdBy      User?    @relation("AccessGroupCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  users          User[]
+
+  @@map("access_groups")
+}
+
+model Customer {
+  id             String          @id @default(uuid())
+  externalId     String
+  serverId       String
+  username       String
+  password       String
+  name           String?
+  email          String?
+  whatsapp       String?
+  telegram       String?
+  packageId      String?
+  resellerUserId String
+  status         String          @default("ACTIVE")
+  isTrial        Boolean         @default(false)
+  connections    Int             @default(1)
+  expiresAt      DateTime
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  paymentToken   String?         @unique
+  server         XuiServer       @relation(fields: [serverId], references: [id])
+  package        Package?        @relation(fields: [packageId], references: [id])
+  reseller       User            @relation(fields: [resellerUserId], references: [id])
+  asaasPayments  AsaasPayment[]
+  manualPayments ManualPayment[]
+
+  @@unique([serverId, externalId])
+}
+
+model Package {
+  id               String     @id @default(uuid())
+  serverId         String
+  externalId       String
+  name             String
+  description      String?
+  duration         Int
+  durationUnit     String     @default("DAYS")
+  credits          Int        @default(0)
+  planPrice        Int        @default(0)
+  isTrial          Boolean    @default(false)
+  isActive         Boolean    @default(true)
+  connections      Int        @default(1)
+  maxConnections   Int?
+  bouquets         String?    @db.Text
+  outputFormats    String?    @db.Text
+  template         String?    @db.Text
+  templateXciptv   String?    @db.Text
+  templateSimple   String?    @db.Text
+  sortOrder        Int        @default(0)
+  showOnDashboard  Boolean    @default(true)
+  quickTestEnabled Boolean    @default(false)
+  quickTestLabel   String?
+  quickTestIcon    String?
+  ownerId          String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+  customers        Customer[]
+  server           XuiServer  @relation(fields: [serverId], references: [id])
+  owner            User?      @relation("PackageOwner", fields: [ownerId], references: [id])
+
+  @@unique([serverId, externalId])
+  @@index([ownerId])
+}
+
+model Bouquet {
+  id         String     @id @default(uuid())
+  serverId   String
+  externalId String
+  name       String
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  server     XuiServer  @relation(fields: [serverId], references: [id])
+  checkouts  Checkout[]
+
+  @@unique([serverId, externalId])
+}
+
+model NotificationSettings {
+  id                          String   @id @default(uuid())
+  userId                      String   @unique
+  enabled                     Boolean  @default(true)
+  daysBefore                  String   @default("7,3,1,0")
+  sendTime                    String   @default("09:00")
+  whatsappEnabled             Boolean  @default(false)
+  botbotAppKey                String?
+  botbotAuthKey               String?
+  telegramEnabled             Boolean  @default(false)
+  telegramBotToken            String?
+  telegramChatId              String?
+  emailEnabled                Boolean  @default(false)
+  smtpHost                    String?
+  smtpPort                    Int?
+  smtpUser                    String?
+  smtpPass                    String?
+  smtpFrom                    String?
+  reminderTemplate            String?
+  urgentReminderTemplate      String?
+  expiryTemplate              String?
+  renewalConfirmationTemplate String?
+  welcomeTemplate             String?
+  trialExpiryTemplate         String?
+  postExpiryTemplate          String?
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+  recoveryTemplate            String?
+  coreWelcomeTemplate         String?
+  coreRenewalTemplate         String?
+  corePaymentReminderTemplate String?
+  coreReminderMinAgeMinutes   Int      @default(30)
+  coreReminderMinGapHours     Int      @default(6)
+  coreReminderMaxCount        Int      @default(3)
+  corePaymentOverdueTemplate  String?
+  user                        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model NotificationLog {
+  id           String    @id @default(uuid())
+  userId       String
+  customerId   String?
+  customerName String?
+  phone        String?
+  email        String?
+  telegramId   String?
+  type         String
+  channel      String
+  status       String
+  message      String
+  sentAt       DateTime?
+  error        String?
+  relatedType  String?
+  relatedId    String?
+  createdAt    DateTime  @default(now())
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([relatedType, relatedId])
+}
+
+model CreditTransaction {
+  id            String   @id @default(uuid())
+  userId        String
+  type          String
+  amount        Int
+  balanceBefore Int
+  balanceAfter  Int
+  description   String?
+  relatedId     String?
+  relatedType   String?
+  createdAt     DateTime @default(now())
+  user          User     @relation(fields: [userId], references: [id])
+}
+
+model ActionLog {
+  id        String   @id @default(uuid())
+  userId    String
+  action    String
+  entity    String
+  entityId  String?
+  details   String?
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model PanelSettings {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  panelName String   @default("Painel IPTV")
+  logoUrl   String?
+  publicBaseUrl String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("panel_settings")
+}
+
+model AsaasConfig {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  apiKey       String
+  environment  String   @default("sandbox")
+  webhookToken String?
+  pixKey       String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("asaas_config")
+}
+
+model AsaasPayment {
+  id              String    @id @default(uuid())
+  asaasId         String    @unique
+  customerId      String
+  asaasCustomerId String
+  value           Float
+  dueDate         DateTime
+  status          String
+  billingType     String    @default("PIX")
+  invoiceUrl      String?
+  pixQrCode       String?
+  pixCopyPaste    String?
+  packageId       String?
+  daysToRenew     Int       @default(30)
+  paidAt          DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  customer        Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("asaas_payment")
+}
+
+model ManualPayment {
+  id          String   @id @default(uuid())
+  customerId  String
+  value       Float
+  paymentDate DateTime @default(now())
+  method      String   @default("PIX")
+  notes       String?
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("manual_payment")
+}
+
+model AsaasWebhookLog {
+  id        String   @id @default(uuid())
+  event     String
+  paymentId String?
+  payload   String
+  processed Boolean  @default(false)
+  error     String?
+  createdAt DateTime @default(now())
+
+  @@map("asaas_webhook_log")
+}
+
+model VODMetadata {
+  id            String    @id @default(uuid())
+  tmdbId        Int       @unique
+  tmdbType      String
+  title         String
+  originalTitle String?
+  overview      String?
+  releaseDate   String?
+  genres        String?
+  posterUrl     String?
+  backdropUrl   String?
+  runtime       Int?
+  rating        Float?
+  cast          String?
+  director      String?
+  creator       String?
+  trailerUrl    String?
+  country       String?
+  status        String?
+  seasons       Int?
+  lastSynced    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  vodItems      VODItem[]
+
+  @@map("vod_metadata")
+}
+
+model VODItem {
+  id             String                 @id @default(uuid())
+  serverId       String
+  xuiStreamId    Int                    @unique
+  streamName     String
+  streamUrl      String
+  categoryId     Int?
+  categoryName   String?
+  vodType        String
+  metadataId     String?
+  title          String
+  year           Int?
+  posterUrl      String?
+  overview       String?
+  hasMetadata    Boolean                @default(false)
+  metadataSource String?
+  needsReview    Boolean                @default(false)
+  isEnriched     Boolean                @default(false)
+  lastEnrichedAt DateTime?
+  originalTitle  String?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  jobItems       VODEnrichmentJobItem[]
+  metadata       VODMetadata?           @relation(fields: [metadataId], references: [id])
+  server         XuiServer              @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@index([serverId, vodType])
+  @@index([serverId, hasMetadata])
+  @@index([serverId, needsReview])
+  @@index([categoryId])
+  @@map("vod_item")
+}
+
+model VODEnrichmentJob {
+  id             String                 @id @default(uuid())
+  serverId       String
+  userId         String
+  jobType        String
+  status         String
+  totalItems     Int
+  processedItems Int                    @default(0)
+  successItems   Int                    @default(0)
+  failedItems    Int                    @default(0)
+  reviewNeeded   Int                    @default(0)
+  progress       Float                  @default(0)
+  error          String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  items          VODEnrichmentJobItem[]
+
+  @@index([serverId, status])
+  @@map("vod_enrichment_job")
+}
+
+model VODEnrichmentJobItem {
+  id          String           @id @default(uuid())
+  jobId       String
+  vodItemId   String
+  status      String
+  tmdbId      Int?
+  matchScore  Float?
+  error       String?
+  processedAt DateTime?
+  vodItem     VODItem          @relation(fields: [vodItemId], references: [id], onDelete: Cascade)
+  job         VODEnrichmentJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@index([vodItemId])
+  @@map("vod_enrichment_job_item")
+}
+
+model TMDBApiKey {
+  id            String    @id @default(uuid())
+  userId        String?
+  keyName       String
+  apiKey        String
+  isActive      Boolean   @default(true)
+  priority      Int       @default(0)
+  requestsToday Int       @default(0)
+  requestsLimit Int       @default(40)
+  lastUsedAt    DateTime?
+  lastErrorAt   DateTime?
+  lastError     String?
+  totalRequests Int       @default(0)
+  successCount  Int       @default(0)
+  errorCount    Int       @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([isActive])
+  @@index([priority])
+  @@map("tmdb_api_key")
+}
+
+model VODImportSchedule {
+  id                String    @id @default(uuid())
+  userId            String
+  serverId          String
+  name              String
+  m3uUrl            String
+  cronExpression    String
+  vodType           String    @default("both")
+  enrichWithTMDB    Boolean   @default(false)
+  clearBeforeImport Boolean   @default(false)
+  categoryMappings  String?
+  bouquetId         Int?
+  tmdbApiKey        String?
+  isActive          Boolean   @default(true)
+  lastRunAt         DateTime?
+  lastRunStatus     String?
+  lastRunError      String?
+  nextRunAt         DateTime?
+  totalRuns         Int       @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  server            XuiServer @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([serverId])
+  @@index([isActive])
+  @@map("vod_import_schedule")
+}
+
+model MarketingConfig {
+  id                  Int      @id @default(autoincrement())
+  painelName          String   @default("PAINEL MASTER")
+  painelLogo          String?
+  telegramBotToken    String?
+  telegramChatId      String?
+  whatsappNumber      String?
+  primaryColor        String   @default("#00E5FF")
+  secondaryColor      String   @default("#1E88E5")
+  sloganText          String?  @default("O melhor do streaming você encontra aqui")
+  maxBannersPerImport Int      @default(30)
+  videoMusicFilmes    String?
+  videoMusicSeries    String?
+  videoMusicFutebol   String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@map("marketing_config")
+}
+
+model GeneratedBanner {
+  id             Int      @id @default(autoincrement())
+  userId         String?
+  type           String
+  orientation    String
+  contentTitle   String
+  tmdbId         Int?
+  filePath       String
+  importId       String?
+  sentToTelegram Boolean  @default(false)
+  sentToWhatsapp Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@index([importId])
+  @@index([type])
+  @@map("generated_banner")
+}
+
+model GeneratedVideo {
+  id          Int      @id @default(autoincrement())
+  importId    String
+  type        String
+  filePath    String
+  xuiStreamId Int?
+  duration    Int
+  bannerCount Int
+  createdAt   DateTime @default(now())
+
+  @@index([importId])
+  @@map("generated_video")
+}
+
+model FootballConfig {
+  id                Int                    @id @default(autoincrement())
+  serverId          String                 @unique
+  categoryName      String                 @default("⚽ JOGOS DO DIA")
+  xuiCategoryId     Int?
+  bouquetId         Int?                   @default(1)
+  timeOffsetMinutes Int                    @default(0)
+  apiFootballKey    String?
+  autoUpdate        Boolean                @default(true)
+  updateSchedule    String                 @default("0 6 * * *")
+  generateBanners   Boolean                @default(true)
+  enabledLeagues    String                 @default("[71,13,2,3,39,140,135,78,61]")
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  matches           DailyMatch[]
+  channels          FootballChannel[]
+  server            XuiServer              @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  leagueMappings    LeagueChannelMapping[]
+
+  @@map("football_config")
+}
+
+model FootballChannel {
+  id             Int            @id @default(autoincrement())
+  configId       Int
+  xuiStreamId    Int
+  xuiStreamName  String
+  streamUrl      String?
+  keywords       String
+  customKeywords String?
+  knownMappings  String?
+  isActive       Boolean        @default(true)
+  priority       Int            @default(0)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  config         FootballConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  @@map("football_channel")
+}
+
+model DailyMatch {
+  id                Int            @id @default(autoincrement())
+  configId          Int
+  apiMatchId        Int
+  homeTeam          String
+  awayTeam          String
+  homeTeamLogo      String?
+  awayTeamLogo      String?
+  leagueId          Int?
+  leagueName        String
+  leagueLogo        String?
+  matchDate         DateTime
+  matchTime         String
+  timezone          String         @default("America/Sao_Paulo")
+  status            String         @default("scheduled")
+  apiChannels       String?
+  mappedChannelId   Int?
+  mappedChannelName String?
+  matchScore        Float?
+  xuiStreamId       Int?
+  xuiStreamName     String?
+  bannerPath        String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  config            FootballConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  @@unique([configId, apiMatchId])
+  @@index([configId])
+  @@index([matchDate])
+  @@map("daily_match")
+}
+
+model LeagueChannelMapping {
+  id                Int            @id @default(autoincrement())
+  configId          Int
+  leagueName        String
+  footballChannelId Int
+  xuiChannelName    String
+  priority          Int            @default(0)
+  mappingType       String         @default("manual")
+  useCount          Int            @default(0)
+  isActive          Boolean        @default(true)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  config            FootballConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  @@unique([configId, leagueName])
+  @@index([configId])
+  @@index([leagueName])
+  @@map("league_channel_mapping")
+}
+
+model ChannelMapping {
+  id             Int      @id @default(autoincrement())
+  apiChannelName String   @unique
+  xuiChannelId   Int
+  xuiChannelName String
+  mappingType    String   @default("auto")
+  matchScore     Float?
+  useCount       Int      @default(1)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([apiChannelName])
+  @@map("channel_mapping")
+}
+
+/// Eventos gerais de TV (multi-esporte) para o dia
+model TVEvent {
+  id           Int           @id @default(autoincrement())
+  title        String
+  sport        String?
+  league       String?
+  homeTeam     String?
+  awayTeam     String?
+  date         DateTime
+  matchTime    String
+  channelName  String?
+  channelLogo  String?
+  apiEventId   String?
+  apiSource    String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  channelMapId Int?
+  channelMap   TVChannelMap? @relation(fields: [channelMapId], references: [id])
+
+  @@index([date])
+  @@index([channelName])
+  @@map("tv_event")
+}
+
+/// Mapeia canais da API para streams/categorias do XUI
+model TVChannelMap {
+  id            Int       @id @default(autoincrement())
+  apiChannel    String    @unique
+  xuiStreamId   Int?
+  xuiServerId   String?
+  xuiCategoryId Int?
+  priority      Int       @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  events        TVEvent[]
+
+  @@index([apiChannel])
+  @@map("tv_channel_map")
+}
+
+/// Planos Premium para venda de fontes compartilhadas
+model PremiumPlan {
+  id             String          @id @default(uuid())
+  name           String
+  description    String?
+  maxConnections Int
+  serverId       String?
+  bouquetIds     String
+  credits        Int             @default(0)
+  isTrial        Boolean         @default(false)
+  durationHours  Int?
+  isActive       Boolean         @default(true)
+  sortOrder      Int             @default(0)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  checkouts      Checkout[]
+  server         XuiServer?      @relation(fields: [serverId], references: [id])
+  sources        PremiumSource[]
+
+  @@map("premium_plan")
+}
+
+/// Fontes Premium criadas (linhas XUI compartilhadas)
+model PremiumSource {
+  id                String           @id @default(uuid())
+  planId            String
+  serverId          String
+  resellerUserId    String
+  premiumCustomerId String?
+  xuiLineId         String
+  username          String           @unique
+  password          String
+  status            String           @default("ACTIVE")
+  expiresAt         DateTime
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  checkout          Checkout?
+  premiumCustomer   PremiumCustomer? @relation(fields: [premiumCustomerId], references: [id])
+  reseller          User             @relation(fields: [resellerUserId], references: [id])
+  server            XuiServer        @relation(fields: [serverId], references: [id])
+  plan              PremiumPlan      @relation(fields: [planId], references: [id])
+
+  @@unique([serverId, xuiLineId])
+  @@index([resellerUserId, status])
+  @@index([premiumCustomerId])
+  @@map("premium_source")
+}
+
+/// Checkout de compra de fonte premium
+model Checkout {
+  id                String           @id @default(uuid())
+  customerId        String?
+  premiumCustomerId String?
+  planId            String
+  serverId          String
+  bouquetId         String
+  durationDays      Int
+  customerName      String
+  customerEmail     String
+  customerPhone     String
+  customerPassword  String?
+  customerDocument  String?
+  paymentMethod     String
+  status            String           @default("pending")
+  amount            Float
+  paymentId         String?
+  asaasPaymentId    String?          @unique
+  asaasCustomerId   String?
+  pixQrCode         String?
+  pixCopyPaste      String?
+  billetBarCode     String?
+  billetUrl         String?
+  paymentUrl        String?
+  premiumSourceId   String?          @unique
+  paidAt            DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  premiumCustomer   PremiumCustomer? @relation("CustomerCheckouts", fields: [premiumCustomerId], references: [id])
+  premiumSource     PremiumSource?   @relation(fields: [premiumSourceId], references: [id])
+  bouquet           Bouquet          @relation(fields: [bouquetId], references: [id])
+  server            XuiServer        @relation(fields: [serverId], references: [id])
+  plan              PremiumPlan      @relation(fields: [planId], references: [id])
+
+  @@index([premiumCustomerId])
+  @@map("checkout")
+}
+
+/// Cliente do Portal Premium (quem compra fontes)
+model PremiumCustomer {
+  id              String          @id @default(uuid())
+  email           String          @unique
+  passwordHash    String
+  name            String
+  phone           String?
+  document        String?
+  asaasCustomerId String?
+  isActive        Boolean         @default(true)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  checkouts       Checkout[]      @relation("CustomerCheckouts")
+  sources         PremiumSource[]
+
+  @@map("premium_customer")
+}
+
+/// Fontes de importação M3U (primárias e secundárias)
+model ImportSource {
+  id                 String    @id @default(uuid())
+  name               String
+  type               String    @default("secondary")
+  url                String
+  isActive           Boolean   @default(true)
+  lastImportAt       DateTime?
+  totalItemsImported Int       @default(0)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@map("import_source")
+}
+
+/// Configuração do Webhook de Teste (App externo)
+model AppWebhookConfig {
+  id               String   @id @default(uuid())
+  name             String   @default("App NEO")
+  apiToken         String   @unique
+  isActive         Boolean  @default(true)
+  serverId         String
+  packageId        String
+  maxTestsPerPhone Int      @default(1)
+  testCooldownDays Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@map("app_webhook_config")
+}
+
+/// Log de testes gerados pelo app externo
+model AppTestRequest {
+  id           String    @id @default(uuid())
+  configId     String
+  phone        String
+  status       String    @default("pending")
+  username     String?
+  password     String?
+  expiresAt    DateTime?
+  errorMessage String?
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([phone])
+  @@index([configId])
+  @@map("app_test_request")
+}
+
+model CoreStream {
+  id        String   @id @default(uuid())
+  publicId  Int      @unique @default(autoincrement())
+  ownerId   String
+  name      String
+  streamUrl String   @db.Text
+  logoUrl   String?  @db.Text
+  epgChannelId String?
+  tvArchive Boolean  @default(false)
+  tvArchiveDuration Int @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  bouquets  CoreBouquetStream[]
+  edgeServers CoreStreamEdgeServer[]
+
+  @@index([ownerId])
+  @@index([isActive])
+  @@unique([ownerId, name])
+  @@map("core_stream")
+}
+
+model CoreEdgeServer {
+  id             String   @id @default(uuid())
+  ownerId        String
+  name           String
+  domain         String?  @db.Text
+  ip             String?
+  vpnIp          String?  @db.Text
+  timezoneOffsetSeconds Int @default(0)
+  networkInterface      String? @db.Text
+  networkSpeed          Int @default(0)
+  httpPort       Int      @default(80)
+  httpsPort      Int      @default(443)
+  rtmpPort       Int      @default(0)
+  maxClients     Int      @default(100000)
+  onlyTimeshift  Boolean  @default(false)
+  duplex         Boolean  @default(false)
+  geoipEnabled   Boolean  @default(false)
+  geoipPriority  String   @default("low")
+  geoipCountries String?  @db.Text
+  ispEnabled     Boolean  @default(false)
+  ispPriority    String   @default("low")
+  ispNames       String?  @db.Text
+  edgeTokenEnc   String?  @db.Text
+  installedAt    DateTime?
+  sshHost        String?
+  sshPort        Int      @default(22)
+  sshUser        String?
+  sshPasswordEnc String?  @db.Text
+  sshKeyEnc      String?  @db.Text
+  os             String   @default("ubuntu")
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  owner          User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  streams        CoreStreamEdgeServer[]
+
+  @@index([ownerId])
+  @@index([isActive])
+  @@unique([ownerId, name])
+  @@map("core_edge_server")
+}
+
+model CoreStreamEdgeServer {
+  streamId  String
+  serverId  String
+  createdAt DateTime @default(now())
+
+  stream    CoreStream    @relation(fields: [streamId], references: [id], onDelete: Cascade)
+  server    CoreEdgeServer @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@id([streamId, serverId])
+  @@index([serverId])
+  @@map("core_stream_edge_server")
+}
+
+model CoreBouquet {
+  id        String   @id @default(uuid())
+  publicId  Int      @unique @default(autoincrement())
+  ownerId   String
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner     User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  streams   CoreBouquetStream[]
+  vodItems  CoreBouquetVodItem[]
+  series    CoreBouquetSeries[]
+  packages  CorePackageBouquet[]
+
+  @@unique([ownerId, name])
+  @@index([ownerId])
+  @@index([isActive])
+  @@map("core_bouquet")
+}
+
+model CoreBouquetStream {
+  bouquetId String
+  streamId  String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  bouquet   CoreBouquet @relation(fields: [bouquetId], references: [id], onDelete: Cascade)
+  stream    CoreStream  @relation(fields: [streamId], references: [id], onDelete: Cascade)
+
+  @@id([bouquetId, streamId])
+  @@index([streamId])
+  @@map("core_bouquet_stream")
+}
+
+model CorePackage {
+  id           String   @id @default(uuid())
+  ownerId      String
+  name         String
+  durationDays Int      @default(30)
+  connections  Int      @default(1)
+  priceCents   Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  owner        User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  bouquets     CorePackageBouquet[]
+  lines        CoreLine[]
+  payments     CorePayment[]
+
+  @@unique([ownerId, name])
+  @@index([ownerId])
+  @@index([isActive])
+  @@map("core_package")
+}
+
+model CorePackageBouquet {
+  packageId String
+  bouquetId String
+  createdAt DateTime @default(now())
+
+  package   CorePackage @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  bouquet   CoreBouquet @relation(fields: [bouquetId], references: [id], onDelete: Cascade)
+
+  @@id([packageId, bouquetId])
+  @@index([bouquetId])
+  @@map("core_package_bouquet")
+}
+
+model CoreLine {
+  id           String   @id @default(uuid())
+  ownerId      String
+  username     String   @unique
+  passwordHash String   @db.Text
+  status       String   @default("ACTIVE")
+  connections  Int      @default(1)
+  expiresAt    DateTime
+  packageId    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  owner        User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  package      CorePackage? @relation(fields: [packageId], references: [id], onDelete: SetNull)
+  payments     CorePayment[]
+  playbackSessions CorePlaybackSession[]
+
+  @@index([ownerId])
+  @@index([status])
+  @@index([expiresAt])
+  @@map("core_line")
+}
+
+model CorePayment {
+  id            String   @id @default(uuid())
+  ownerId       String
+  lineId        String?
+  packageId     String
+  daysToAdd     Int
+  amountCents   Int
+  kind          String   @default("RENEW")
+  status        String   @default("PENDING")
+  asaasPaymentId String? @unique
+  invoiceUrl    String?  @db.Text
+  pixQrCode     String?  @db.Text
+  pixCopyPaste  String?  @db.Text
+  dueDate       DateTime?
+  customerName  String?
+  customerPhone String?
+  createdLineId String?
+  newUsername   String?
+  newPasswordEnc String? @db.Text
+  remindersEnabled Boolean @default(true)
+  reminderCount Int      @default(0)
+  lastReminderAt DateTime?
+  overdueNotifiedAt DateTime?
+  paidAt        DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  owner         User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  line          CoreLine?  @relation(fields: [lineId], references: [id], onDelete: SetNull)
+  package       CorePackage @relation(fields: [packageId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId])
+  @@index([lineId])
+  @@index([status])
+  @@map("core_payment")
+}
+
+model CoreVodItem {
+  id        String   @id @default(uuid())
+  publicId  Int      @unique @default(autoincrement())
+  ownerId   String
+  name      String
+  streamUrl String   @db.Text
+  posterUrl String?  @db.Text
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  bouquets  CoreBouquetVodItem[]
+
+  @@index([ownerId])
+  @@index([isActive])
+  @@unique([ownerId, name])
+  @@map("core_vod_item")
+}
+
+model CoreBouquetVodItem {
+  bouquetId String
+  vodItemId String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  bouquet   CoreBouquet @relation(fields: [bouquetId], references: [id], onDelete: Cascade)
+  vodItem   CoreVodItem @relation(fields: [vodItemId], references: [id], onDelete: Cascade)
+
+  @@id([bouquetId, vodItemId])
+  @@index([vodItemId])
+  @@map("core_bouquet_vod_item")
+}
+
+model CoreSeries {
+  id        String   @id @default(uuid())
+  publicId  Int      @unique @default(autoincrement())
+  ownerId   String
+  name      String
+  coverUrl  String?  @db.Text
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  episodes  CoreSeriesEpisode[]
+  bouquets  CoreBouquetSeries[]
+
+  @@index([ownerId])
+  @@index([isActive])
+  @@unique([ownerId, name])
+  @@map("core_series")
+}
+
+model CoreSeriesEpisode {
+  id        String   @id @default(uuid())
+  publicId  Int      @unique @default(autoincrement())
+  seriesId  String
+  season    Int      @default(1)
+  episode   Int      @default(1)
+  title     String
+  streamUrl String   @db.Text
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  series    CoreSeries @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+
+  @@index([seriesId])
+  @@index([isActive])
+  @@map("core_series_episode")
+}
+
+model CoreBouquetSeries {
+  bouquetId String
+  seriesId  String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  bouquet   CoreBouquet @relation(fields: [bouquetId], references: [id], onDelete: Cascade)
+  series    CoreSeries  @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+
+  @@id([bouquetId, seriesId])
+  @@index([seriesId])
+  @@map("core_bouquet_series")
+}
+
+model CoreM3USchedule {
+  id             String   @id @default(uuid())
+  ownerId        String
+  name           String
+  m3uUrl         String   @db.Text
+  cronExpression String
+  type           String   @default("all")
+  mode           String   @default("replace")
+  createPackage  Boolean  @default(true)
+  packageName    String   @default("PACOTE PADRÃO")
+  isActive       Boolean  @default(true)
+  lastRunAt      DateTime?
+  lastStatus     String?
+  lastMessage    String?  @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  owner          User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, name])
+  @@index([ownerId])
+  @@index([isActive])
+  @@map("core_m3u_schedule")
+}
+
+model CorePlaybackSession {
+  id            String   @id @default(uuid())
+  lineId        String
+  contentType   String
+  contentPublicId Int?
+  serverHost    String?  @db.Text
+  ipAddress     String?
+  userAgent     String?  @db.Text
+  startedAt     DateTime @default(now())
+  lastSeenAt    DateTime @default(now())
+  endedAt       DateTime?
+  status        String   @default("active")
+  bytesSent     BigInt   @default(0)
+
+  line          CoreLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
+
+  @@index([lineId])
+  @@index([endedAt])
+  @@index([lastSeenAt])
+  @@map("core_playback_session")
+}
+
+model CoreEpgSource {
+  id             String   @id @default(uuid())
+  ownerId        String
+  name           String
+  xmltvUrl       String   @db.Text
+  cronExpression String
+  daysAhead      Int      @default(2)
+  isActive       Boolean  @default(true)
+  lastRunAt      DateTime?
+  lastStatus     String?
+  lastMessage    String?  @db.Text
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  owner          User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  programs       CoreEpgProgram[]
+
+  @@unique([ownerId, name])
+  @@index([ownerId])
+  @@index([isActive])
+  @@map("core_epg_source")
+}
+
+model CoreEpgChannel {
+  id          String   @id @default(uuid())
+  ownerId     String
+  channelId   String
+  displayName String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, channelId])
+  @@index([ownerId])
+  @@map("core_epg_channel")
+}
+
+model CoreEpgProgram {
+  id          String   @id @default(uuid())
+  ownerId     String
+  sourceId    String
+  channelId   String
+  startAt     DateTime
+  endAt       DateTime
+  title       String
+  description String?  @db.Text
+  createdAt   DateTime @default(now())
+
+  owner       User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  source      CoreEpgSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId, channelId, startAt])
+  @@index([sourceId])
+  @@map("core_epg_program")
+}
