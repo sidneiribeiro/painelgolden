@@ -183,7 +183,6 @@ const contentItems: NavItem[] = [
   { path: '/vod', label: 'Filmes / Séries', icon: Icons.vod, key: 'vod', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/vod/items', label: 'Itens VOD', icon: Icons.vod, key: 'vod', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/vod/import-v2', label: 'Importar VOD', icon: Icons.import, key: 'vod', roles: ['SUPER_ADMIN', 'ADMIN'] },
-  { path: '/vod/sources', label: 'Fontes VOD', icon: Icons.import, key: 'vod', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/vod/schedules', label: 'Agendamentos VOD', icon: Icons.settings, key: 'vod', roles: ['SUPER_ADMIN', 'ADMIN'] },
 ];
 
