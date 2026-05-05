@@ -1469,7 +1469,18 @@ export const startEdgeServerInstallNginxHealthJob = asyncHandler(async (req: Req
     `docker build -t painelmaster-edge-backend:latest .; ` +
     `docker rm -f painelmaster-edge-backend >/dev/null 2>&1 || true; ` +
     `docker run -d --name painelmaster-edge-backend --restart unless-stopped --env-file .env.edge -p 127.0.0.1:3001:3001 painelmaster-edge-backend:latest; ` +
-    `curl -fsS http://127.0.0.1:3001/api/health >/dev/null; ` +
+    `echo "Aguardando edge backend responder em /api/health..."; ` +
+    `ok=0; for i in $(seq 1 60); do ` +
+    `  if curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1; then ok=1; break; fi; ` +
+    `  sleep 2; ` +
+    `done; ` +
+    `if [ "$ok" != "1" ]; then ` +
+    `  echo "ERRO: edge backend não respondeu em /api/health"; ` +
+    `  docker ps -a || true; ` +
+    `  docker inspect --format "{{.State.Status}} {{.State.ExitCode}}" painelmaster-edge-backend 2>/dev/null || true; ` +
+    `  docker logs --tail=200 painelmaster-edge-backend 2>/dev/null || true; ` +
+    `  exit 56; ` +
+    `fi; ` +
     `echo DONE`;
 
   const finish = async (status: CoreEdgeJobStatus, error?: string) => {
