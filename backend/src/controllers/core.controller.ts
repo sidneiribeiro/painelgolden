@@ -1450,7 +1450,8 @@ export const startEdgeServerInstallNginxHealthJob = asyncHandler(async (req: Req
     `set -eu; ` +
     `export DEBIAN_FRONTEND=noninteractive; ` +
     `apt-get update -y; ` +
-    `apt-get install -y nginx git ca-certificates curl docker.io docker-compose-plugin netcat-openbsd; ` +
+    `apt-get install -y nginx git ca-certificates curl docker.io netcat-openbsd; ` +
+    `apt-get install -y docker-compose-plugin || true; ` +
     `systemctl enable --now docker; ` +
     `echo "${confB64}" | base64 -d > /etc/nginx/sites-available/core-edge.conf; ` +
     `rm -f /etc/nginx/sites-enabled/default || true; ` +
