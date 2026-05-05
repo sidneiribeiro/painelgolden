@@ -94,18 +94,6 @@ export function XuiConnectionPage() {
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [showDbSection, setShowDbSection] = useState(false);
   const [showSshSection, setShowSshSection] = useState(false);
-  const [balancerServerId, setBalancerServerId] = useState('');
-  const [installType, setInstallType] = useState<'MAIN' | 'LB'>('MAIN');
-  const [balancerCommand, setBalancerCommand] = useState('');
-  const [balancerStdin, setBalancerStdin] = useState('');
-  const [lbMainIp, setLbMainIp] = useState('');
-  const [lbMysqlPassword, setLbMysqlPassword] = useState('');
-  const [lbServerId, setLbServerId] = useState('2');
-  const [mainMysqlRootPassword, setMainMysqlRootPassword] = useState('');
-  const [mainDropDatabase, setMainDropDatabase] = useState(true);
-  const [balancerJobId, setBalancerJobId] = useState<string | null>(null);
-  const [balancerStatus, setBalancerStatus] = useState<string | null>(null);
-  const [balancerLogs, setBalancerLogs] = useState<string[]>([]);
 
   const enableXuiOne = import.meta.env.VITE_ENABLE_XUIONE === 'true';
   const allowXuiOne = enableXuiOne || editingServer?.serverType === 'XUIONE';
@@ -113,82 +101,17 @@ export function XuiConnectionPage() {
 
   const activeTab = useMemo(() => {
     const tab = String(searchParams.get('tab') || 'manage');
-    if (tab === 'add' || tab === 'balancer' || tab === 'manage') return tab;
+    if (tab === 'add' || tab === 'manage') return tab;
     return 'manage';
   }, [searchParams]);
 
-  const setTab = (tab: 'manage' | 'add' | 'balancer') => {
+  const setTab = (tab: 'manage' | 'add') => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       next.set('tab', tab);
       return next;
     });
   };
-
-  const balancerInstallMutation = useMutation({
-    mutationFn: async () => {
-      const res = await api.post(`/servers/${balancerServerId}/balancer/install`, {
-        command: balancerCommand,
-        stdin: balancerStdin,
-      });
-      return res.data;
-    },
-    onSuccess: (data) => {
-      if (data?.jobId) {
-        setBalancerJobId(data.jobId);
-        setBalancerStatus('processing');
-        setBalancerLogs([`[${new Date().toLocaleTimeString()}] Iniciando instalação...`]);
-        toast.success('Instalação iniciada. Acompanhe os logs.');
-      } else {
-        toast.success('Comando iniciado');
-      }
-    },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Erro ao iniciar instalação');
-    },
-  });
-
-  const buildInstallPyCommand = () => {
-    return `sudo bash -lc 'apt-get update && apt-get upgrade -y && apt-get install software-properties-common libxslt1-dev libcurl3 libgeoip-dev python -y; rm -f /tmp/install.py; wget -q \"https://github.com/dOC4eVER/ubuntu20.04/raw/master/ubuntu/install.py\" -O /tmp/install.py; PY=python; command -v python2 >/dev/null 2>&1 && PY=python2 || true; $PY /tmp/install.py'`;
-  };
-
-  const applyInstallPyPreset = () => {
-    setBalancerCommand(buildInstallPyCommand());
-
-    if (installType === 'LB') {
-      if (!lbMainIp.trim() || !lbMysqlPassword || !lbServerId.trim()) {
-        toast.error('Preencha Main IP, MySQL Password e Server ID');
-        return;
-      }
-      setBalancerStdin(`LB\n${lbMainIp.trim()}\n${lbMysqlPassword}\n${lbServerId.trim()}\nY\n`);
-      toast.success('Preset LB aplicado. Agora clique em "Iniciar instalação".');
-      return;
-    }
-
-    const drop = mainDropDatabase ? 'Y' : 'N';
-    setBalancerStdin(`MAIN\nY\n${mainMysqlRootPassword}\n${drop}\n`);
-    toast.success('Preset MAIN aplicado. Agora clique em "Iniciar instalação".');
-  };
-
-  useEffect(() => {
-    if (activeTab === 'balancer' && balancerCommand.trim().length === 0) {
-      setBalancerCommand(buildInstallPyCommand());
-    }
-  }, [activeTab]);
-
-  const balancerCancelMutation = useMutation({
-    mutationFn: async () => {
-      if (!balancerJobId) return;
-      const res = await api.post(`/servers/balancer/jobs/${balancerJobId}/cancel`);
-      return res.data;
-    },
-    onSuccess: () => {
-      toast.success('Cancelado');
-    },
-    onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Erro ao cancelar');
-    },
-  });
 
   // Busca servidores
   const { data: servers, isLoading } = useQuery({
@@ -198,10 +121,6 @@ export function XuiConnectionPage() {
       return res.data.data as XuiServer[];
     },
   });
-
-  const balancerServers = useMemo(() => {
-    return (servers || []).filter((s) => s.serverType === 'XTREAMUI');
-  }, [servers]);
 
   // Criar servidor
   const createMutation = useMutation({
@@ -329,43 +248,6 @@ export function XuiConnectionPage() {
     }
   }, [activeTab, modalOpen]);
 
-  useEffect(() => {
-    if (activeTab !== 'balancer') return;
-    if (!balancerJobId) return;
-    if (balancerStatus === 'completed' || balancerStatus === 'failed' || balancerStatus === 'canceled') return;
-
-    const checkOnce = async () => {
-      try {
-        const res = await api.get(`/servers/balancer/jobs/${balancerJobId}`);
-        const job = res.data;
-        setBalancerStatus(job.status);
-        if (Array.isArray(job.logs)) setBalancerLogs(job.logs);
-        if (job.status === 'completed') {
-          toast.success('Instalação finalizada');
-          setBalancerJobId(null);
-        } else if (job.status === 'failed') {
-          toast.error(job.error || 'Falha na instalação');
-          setBalancerJobId(null);
-        } else if (job.status === 'canceled') {
-          toast('Instalação cancelada');
-          setBalancerJobId(null);
-        }
-      } catch (e: any) {
-        const status = e?.response?.status;
-        if (status === 401 || status === 403 || status === 404) {
-          setBalancerJobId(null);
-          setBalancerStatus(null);
-          setBalancerLogs([]);
-          return;
-        }
-      }
-    };
-
-    checkOnce();
-    const interval = setInterval(checkOnce, 1500);
-    return () => clearInterval(interval);
-  }, [activeTab, balancerJobId, balancerStatus]);
-
   const openEditModal = (server: XuiServer) => {
     setEditingServer(server);
     setForm({
@@ -487,11 +369,9 @@ export function XuiConnectionPage() {
         <div>
           <h1 className="text-2xl font-bold text-zinc-900 dark:text-white">Servidores</h1>
           <p className="text-zinc-600 dark:text-zinc-400 mt-1">
-            {activeTab === 'balancer'
-              ? 'Instalar/gerenciar balance (load balancer)'
-              : activeTab === 'add'
-                ? 'Adicionar um novo servidor XUI ONE ou Xtream UI'
-                : 'Gerenciar servidores XUI ONE / Xtream UI'}
+            {activeTab === 'add'
+              ? 'Adicionar um novo servidor XUI ONE ou Xtream UI'
+              : 'Gerenciar servidores XUI ONE / Xtream UI'}
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -501,272 +381,115 @@ export function XuiConnectionPage() {
           <Button variant={activeTab === 'add' ? 'default' : 'outline'} onClick={() => setTab('add')}>
             Adicionar Servidor
           </Button>
-          <Button variant={activeTab === 'balancer' ? 'default' : 'outline'} onClick={() => setTab('balancer')}>
-            Instalar Balance
-          </Button>
         </div>
       </div>
 
-      {activeTab === 'balancer' ? (
-        <Card className="p-6">
-          <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">Instalar Balance</h2>
-          <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1">
-            Executa o comando via SSH no servidor selecionado e mostra os logs em tempo real.
-          </p>
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="md:col-span-1">
-              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">Servidor</label>
-              <Select value={balancerServerId} onChange={(e) => setBalancerServerId(e.target.value)}>
-                <option value="">Selecione...</option>
-                {balancerServers.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </Select>
-              {balancerServers.length === 0 && (
-                <p className="text-xs text-red-500 mt-1">
-                  Nenhum servidor Xtream UI cadastrado. Cadastre um servidor com tipo Xtream UI.
-                </p>
-              )}
-              <p className="text-xs text-zinc-500 mt-1">
-                Cadastre SSH no servidor (Editar → seção SSH) antes de instalar.
-              </p>
-              <div className="flex gap-2 mt-3">
-                <Button
-                  onClick={() => balancerInstallMutation.mutate()}
-                  disabled={!balancerServerId || balancerInstallMutation.isPending || balancerStatus === 'processing'}
-                >
-                  {balancerInstallMutation.isPending ? 'Iniciando...' : 'Iniciar instalação'}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => applyInstallPyPreset()}
-                  disabled={balancerStatus === 'processing'}
-                >
-                  Preparar preset
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => balancerCancelMutation.mutate()}
-                  disabled={!balancerJobId || balancerCancelMutation.isPending}
-                >
-                  Cancelar
-                </Button>
-              </div>
-            </div>
-
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">Comando</label>
-              <Input
-                value={balancerCommand}
-                onChange={(e) => setBalancerCommand(e.target.value)}
-                placeholder="Cole aqui o comando de instalação"
-              />
-              <p className="text-xs text-zinc-500 mt-1">
-                Se o script pedir interação, ele pode travar aguardando resposta.
-              </p>
-
-              <div className="mt-4 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="text-sm font-medium text-zinc-900 dark:text-white">Preset install.py</div>
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setBalancerStdin('')}
-                      disabled={!balancerStdin || balancerStatus === 'processing'}
-                    >
-                      Limpar respostas
-                    </Button>
-                    <Button
-                      size="sm"
-                      onClick={applyInstallPyPreset}
-                      disabled={balancerStatus === 'processing'}
-                    >
-                      Aplicar preset
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">Tipo de instalação</label>
-                    <Select value={installType} onChange={(e) => setInstallType(e.target.value as any)} disabled={balancerStatus === 'processing'}>
-                      <option value="MAIN">MAIN (Servidor principal)</option>
-                      <option value="LB">LB (Load Balancer)</option>
-                    </Select>
-                  </div>
-
-                  {installType === 'MAIN' ? (
-                    <>
-                      <div>
-                        <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">MySQL Root Password (opcional)</label>
-                        <Input type="password" value={mainMysqlRootPassword} onChange={(e) => setMainMysqlRootPassword(e.target.value)} placeholder="Deixe vazio se não tiver" />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">Criar banco do zero</label>
-                        <Select value={mainDropDatabase ? 'Y' : 'N'} onChange={(e) => setMainDropDatabase(e.target.value === 'Y')} disabled={balancerStatus === 'processing'}>
-                          <option value="Y">Sim (drop e recriar)</option>
-                          <option value="N">Não</option>
-                        </Select>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div>
-                        <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">Main Server IP</label>
-                        <Input value={lbMainIp} onChange={(e) => setLbMainIp(e.target.value)} placeholder="Ex: 1.2.3.4" />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">MySQL Password (Main)</label>
-                        <Input type="password" value={lbMysqlPassword} onChange={(e) => setLbMysqlPassword(e.target.value)} placeholder="Senha do user_iptvpro" />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1">Load Balancer Server ID</label>
-                        <Input value={lbServerId} onChange={(e) => setLbServerId(e.target.value)} placeholder="Ex: 2" />
-                      </div>
-                    </>
-                  )}
-                </div>
-
-                <div className="text-xs text-zinc-500 mt-3">
-                  {balancerStdin ? 'Respostas automáticas configuradas.' : 'Respostas automáticas não configuradas.'}
-                </div>
-              </div>
-
-              {balancerLogs.length > 0 && (
-                <div className="mt-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="text-sm font-medium text-zinc-900 dark:text-white">
-                      Logs {balancerStatus ? `(${balancerStatus})` : ''}
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setBalancerLogs([])}
-                      disabled={balancerStatus === 'processing'}
-                    >
-                      Limpar
-                    </Button>
-                  </div>
-                  <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-3 max-h-64 overflow-y-auto font-mono text-sm">
-                    {balancerLogs.map((log, i) => (
-                      <div key={i} className="text-gray-700 dark:text-gray-300 py-0.5">{log}</div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+      <>
+        {activeTab === 'manage' && (
+          <div className="flex justify-end">
+            <Button onClick={openCreateModal}>➕ Novo Servidor</Button>
           </div>
-        </Card>
-      ) : (
-        <>
-          {activeTab === 'manage' && (
-            <div className="flex justify-end">
-              <Button onClick={openCreateModal}>➕ Novo Servidor</Button>
-            </div>
+        )}
+
+        {/* Lista de servidores */}
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {servers?.map((server) => (
+            <Card key={server.id} className="p-5">
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">{server.name}</h3>
+                    <Badge variant={server.serverType === 'XTREAMUI' ? 'warning' : 'default'} className="text-xs">
+                      {server.serverType === 'XTREAMUI' ? 'Xtream UI' : 'XUI ONE'}
+                    </Badge>
+                    {server.isDefault && (
+                      <Badge variant="default" className="text-xs">Padrão</Badge>
+                    )}
+                  </div>
+                  <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1 break-all">{server.baseUrl}</p>
+                </div>
+                {getStatusBadge(server.status)}
+              </div>
+
+              <div className="space-y-2 text-sm text-zinc-600 dark:text-zinc-400 mb-4">
+                <div className="flex justify-between">
+                  <span>Access Code:</span>
+                  <span className="font-mono text-zinc-700 dark:text-zinc-300">{server.accessCode}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Pacotes:</span>
+                  <span className="text-zinc-700 dark:text-zinc-300">{server._count?.packages || 0}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Clientes:</span>
+                  <span className="text-zinc-700 dark:text-zinc-300">{server._count?.customers || 0}</span>
+                </div>
+                {server.lastSync && (
+                  <div className="flex justify-between">
+                    <span>Última Sinc:</span>
+                    <span className="text-zinc-700 dark:text-zinc-300">
+                      {new Date(server.lastSync).toLocaleDateString('pt-BR', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        timeZone: 'America/Sao_Paulo',
+                      })}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-2 flex-wrap">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => syncMutation.mutate(server.id)}
+                  loading={syncMutation.isPending}
+                >
+                  🔄 Sincronizar
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => openEditModal(server)}
+                >
+                  ✏️ Editar
+                </Button>
+                <Button
+                  size="sm"
+                  variant={server.isActive ? 'ghost' : 'default'}
+                  onClick={() => toggleMutation.mutate(server.id)}
+                >
+                  {server.isActive ? '🔴 Desativar' : '🟢 Ativar'}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-red-400"
+                  onClick={() => {
+                    if (confirm('Remover este servidor?')) {
+                      deleteMutation.mutate(server.id);
+                    }
+                  }}
+                >
+                  🗑️
+                </Button>
+              </div>
+            </Card>
+          ))}
+
+          {servers?.length === 0 && (
+            <Card className="p-8 col-span-full text-center">
+              <p className="text-zinc-600 dark:text-zinc-400 mb-4">Nenhum servidor configurado</p>
+              <Button onClick={openCreateModal}>
+                Adicionar Servidor
+              </Button>
+            </Card>
           )}
+        </div>
 
-          {/* Lista de servidores */}
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {servers?.map((server) => (
-              <Card key={server.id} className="p-5">
-                <div className="flex items-start justify-between mb-4">
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">{server.name}</h3>
-                      <Badge variant={server.serverType === 'XTREAMUI' ? 'warning' : 'default'} className="text-xs">
-                        {server.serverType === 'XTREAMUI' ? 'Xtream UI' : 'XUI ONE'}
-                      </Badge>
-                      {server.isDefault && (
-                        <Badge variant="default" className="text-xs">Padrão</Badge>
-                      )}
-                    </div>
-                    <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-1 break-all">{server.baseUrl}</p>
-                  </div>
-                  {getStatusBadge(server.status)}
-                </div>
-
-                <div className="space-y-2 text-sm text-zinc-600 dark:text-zinc-400 mb-4">
-                  <div className="flex justify-between">
-                    <span>Access Code:</span>
-                    <span className="font-mono text-zinc-700 dark:text-zinc-300">{server.accessCode}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Pacotes:</span>
-                    <span className="text-zinc-700 dark:text-zinc-300">{server._count?.packages || 0}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Clientes:</span>
-                    <span className="text-zinc-700 dark:text-zinc-300">{server._count?.customers || 0}</span>
-                  </div>
-                  {server.lastSync && (
-                    <div className="flex justify-between">
-                      <span>Última Sinc:</span>
-                      <span className="text-zinc-700 dark:text-zinc-300">
-                        {new Date(server.lastSync).toLocaleDateString('pt-BR', {
-                          day: '2-digit',
-                          month: '2-digit',
-                          year: 'numeric',
-                          timeZone: 'America/Sao_Paulo',
-                        })}
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex gap-2 flex-wrap">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => syncMutation.mutate(server.id)}
-                    loading={syncMutation.isPending}
-                  >
-                    🔄 Sincronizar
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => openEditModal(server)}
-                  >
-                    ✏️ Editar
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant={server.isActive ? 'ghost' : 'default'}
-                    onClick={() => toggleMutation.mutate(server.id)}
-                  >
-                    {server.isActive ? '🔴 Desativar' : '🟢 Ativar'}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-red-400"
-                    onClick={() => {
-                      if (confirm('Remover este servidor?')) {
-                        deleteMutation.mutate(server.id);
-                      }
-                    }}
-                  >
-                    🗑️
-                  </Button>
-                </div>
-              </Card>
-            ))}
-
-            {servers?.length === 0 && (
-              <Card className="p-8 col-span-full text-center">
-                <p className="text-zinc-600 dark:text-zinc-400 mb-4">Nenhum servidor configurado</p>
-                <Button onClick={openCreateModal}>
-                  Adicionar Servidor
-                </Button>
-              </Card>
-            )}
-          </div>
-
-          {/* Instruções */}
-          <Card className="p-6">
+        {/* Instruções */}
+        <Card className="p-6">
         <div className="flex items-center justify-between mb-6">
           <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">📘 Guia de Configuração</h3>
           <div className="flex bg-zinc-100 dark:bg-zinc-800 p-1 rounded-lg">
@@ -910,9 +633,8 @@ export function XuiConnectionPage() {
             </div>
           </div>
         </div>
-          </Card>
-        </>
-      )}
+        </Card>
+      </>
 
       {/* Modal de Criar/Editar */}
       <Modal

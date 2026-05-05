@@ -170,7 +170,7 @@ const navItems: NavItem[] = [
 const serverItems: NavItem[] = [
   { path: '/settings/xui-connection?tab=manage', label: 'Gerir Servidores', icon: Icons.xui, key: 'xui_connection', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/settings/xui-connection?tab=add', label: 'Adicionar Servidor', icon: Icons.xui, key: 'xui_connection', roles: ['SUPER_ADMIN', 'ADMIN'] },
-  { path: '/settings/xui-connection?tab=balancer', label: 'Instalar Balance', icon: Icons.xui, key: 'xui_connection', roles: ['SUPER_ADMIN', 'ADMIN'] },
+  { path: '/core', label: 'Xtream Novo', icon: Icons.core, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
 ];
 
 const bouquetItems: NavItem[] = [
@@ -188,7 +188,6 @@ const contentItems: NavItem[] = [
 ];
 
 const managementItems: NavItem[] = [
-  { path: '/core', label: 'Xtream Novo', icon: Icons.core, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
   { path: '/users', label: 'Usuários', icon: Icons.users, key: 'users', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/settings/access-groups', label: 'Grupos de Acesso', icon: Icons.settings, key: 'access_groups', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/settings/notifications', label: 'Notificações', icon: Icons.notifications, key: 'notifications' },
