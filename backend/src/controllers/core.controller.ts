@@ -25,7 +25,7 @@ type CoreEdgeJobStatus = 'processing' | 'completed' | 'failed' | 'canceled';
 type CoreEdgeJob = {
   status: CoreEdgeJobStatus;
   serverId: string;
-  action: 'ssh_test' | 'install_nginx_health';
+  action: 'ssh_test' | 'install_nginx_health' | 'install_full_edge';
   startedAt: Date;
   finishedAt?: Date;
   logs: string[];
@@ -1360,12 +1360,12 @@ export const startEdgeServerInstallNginxHealthJob = asyncHandler(async (req: Req
   coreEdgeJobs.set(jobId, {
     status: 'processing',
     serverId: server.id,
-    action: 'install_nginx_health',
+    action: 'install_full_edge',
     startedAt: new Date(),
     logs: [],
   });
 
-  addCoreEdgeJobLog(jobId, `Iniciando instalação (nginx proxy + /health) em ${server.sshUser}@${sshHost}:${server.sshPort || 22}`);
+  addCoreEdgeJobLog(jobId, `Iniciando instalação (nginx + edge backend + /health) em ${server.sshUser}@${sshHost}:${server.sshPort || 22}`);
   res.json({ ok: true, jobId });
 
   const ssh = new SSHClient();
@@ -1400,17 +1400,75 @@ export const startEdgeServerInstallNginxHealthJob = asyncHandler(async (req: Req
   ].join('\n');
 
   const confB64 = Buffer.from(conf, 'utf8').toString('base64');
+
+  const forwardedHostRaw = String(req.headers['x-forwarded-host'] || '').trim();
+  const hostHeader = (forwardedHostRaw.split(',')[0]?.trim() || String(req.headers.host || '').trim()).replace(/:\d+$/, '');
+  const mainHost = hostHeader || '127.0.0.1';
+  const mainDbUrlRaw = String(process.env.DATABASE_URL || env.DATABASE_URL || '').trim();
+  if (!mainDbUrlRaw || (!mainDbUrlRaw.startsWith('postgresql://') && !mainDbUrlRaw.startsWith('postgres://'))) {
+    throw new AppError(500, 'DATABASE_URL do MAIN inválida (esperado postgres)');
+  }
+
+  const u = new URL(mainDbUrlRaw);
+  const dbPort = u.port || '5432';
+  u.hostname = mainHost;
+  u.port = dbPort;
+  const edgeDatabaseUrl = u.toString();
+
+  const edgeToken = (server as any).edgeTokenEnc ? decrypt((server as any).edgeTokenEnc) : '';
+  const jwtSecret = String(process.env.JWT_SECRET || env.JWT_SECRET || '').trim();
+  const jwtRefreshSecret = String(process.env.JWT_REFRESH_SECRET || env.JWT_REFRESH_SECRET || '').trim();
+  const encryptionKey = String(process.env.ENCRYPTION_KEY || env.ENCRYPTION_KEY || '').trim();
+  const scheme = String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0]?.trim() || 'http';
+  const mainBase = `${scheme}://${mainHost}`;
+  const allowedOrigins = [mainBase, `http://${mainHost}`, `https://${mainHost}`, `http://${sshHost}`, `https://${sshHost}`]
+    .filter(Boolean)
+    .map((s) => s.trim())
+    .filter((s, idx, arr) => !!s && arr.indexOf(s) === idx)
+    .join(',');
+
+  const edgeEnv = [
+    'NODE_ENV=production',
+    'PORT=3001',
+    'CORE_EDGE_ONLY=true',
+    `DATABASE_URL=${edgeDatabaseUrl}`,
+    edgeToken ? `EDGE_TOKEN=${edgeToken}` : '',
+    jwtSecret ? `JWT_SECRET=${jwtSecret}` : '',
+    jwtRefreshSecret ? `JWT_REFRESH_SECRET=${jwtRefreshSecret}` : '',
+    encryptionKey ? `ENCRYPTION_KEY=${encryptionKey}` : '',
+    `ALLOWED_ORIGINS=${allowedOrigins}`,
+    `API_URL=${mainBase}/api`,
+    `FRONTEND_URL=${mainBase}`,
+  ]
+    .filter(Boolean)
+    .join('\n')
+    .concat('\n');
+
+  const edgeEnvB64 = Buffer.from(edgeEnv, 'utf8').toString('base64');
+
   const command =
     `set -eu; ` +
     `export DEBIAN_FRONTEND=noninteractive; ` +
     `apt-get update -y; ` +
-    `apt-get install -y nginx; ` +
+    `apt-get install -y nginx git ca-certificates curl docker.io docker-compose-plugin netcat-openbsd; ` +
+    `systemctl enable --now docker; ` +
     `echo "${confB64}" | base64 -d > /etc/nginx/sites-available/core-edge.conf; ` +
     `rm -f /etc/nginx/sites-enabled/default || true; ` +
     `ln -sf /etc/nginx/sites-available/core-edge.conf /etc/nginx/sites-enabled/core-edge.conf; ` +
     `nginx -t; ` +
     `systemctl restart nginx; ` +
     `systemctl enable nginx; ` +
+    `echo "Verificando acesso ao Postgres do MAIN em ${mainHost}:${dbPort}"; ` +
+    `nc -z -w 3 ${mainHost} ${dbPort} || (echo "ERRO: Balance nao consegue acessar o Postgres do MAIN (${mainHost}:${dbPort}). Libere a porta 5432 no MAIN somente para este balance." && exit 20); ` +
+    `mkdir -p /opt/painelmaster-edge; ` +
+    `(test -d /opt/painelmaster-edge/.git && (cd /opt/painelmaster-edge && git pull)) || git clone https://github.com/sidneiribeiro/painelmaster.git /opt/painelmaster-edge; ` +
+    `mkdir -p /opt/painelmaster-edge/backend; ` +
+    `echo "${edgeEnvB64}" | base64 -d > /opt/painelmaster-edge/backend/.env.edge; ` +
+    `cd /opt/painelmaster-edge/backend; ` +
+    `docker build -t painelmaster-edge-backend:latest .; ` +
+    `docker rm -f painelmaster-edge-backend >/dev/null 2>&1 || true; ` +
+    `docker run -d --name painelmaster-edge-backend --restart unless-stopped --env-file .env.edge -p 127.0.0.1:3001:3001 painelmaster-edge-backend:latest; ` +
+    `curl -fsS http://127.0.0.1:3001/api/health >/dev/null; ` +
     `echo DONE`;
 
   const finish = async (status: CoreEdgeJobStatus, error?: string) => {
