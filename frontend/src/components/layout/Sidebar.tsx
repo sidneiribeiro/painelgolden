@@ -168,8 +168,6 @@ const navItems: NavItem[] = [
 ];
 
 const serverItems: NavItem[] = [
-  { path: '/settings/xui-connection?tab=manage', label: 'Gerir Servidores', icon: Icons.xui, key: 'xui_connection', roles: ['SUPER_ADMIN', 'ADMIN'] },
-  { path: '/settings/xui-connection?tab=add', label: 'Adicionar Servidor', icon: Icons.xui, key: 'xui_connection', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/core', label: 'Xtream Novo', icon: Icons.core, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
 ];
 
@@ -189,7 +187,6 @@ const contentItems: NavItem[] = [
 const managementItems: NavItem[] = [
   { path: '/users', label: 'Usuários', icon: Icons.users, key: 'users', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/settings/access-groups', label: 'Grupos de Acesso', icon: Icons.settings, key: 'access_groups', roles: ['SUPER_ADMIN', 'ADMIN'] },
-  { path: '/settings/notifications', label: 'Notificações', icon: Icons.notifications, key: 'notifications' },
   { path: '/settings/panel', label: 'Configurações', icon: Icons.panel, key: 'panel_settings' },
   { path: '/backups', label: 'Backups', icon: Icons.backups, key: 'backups', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
   { path: '/settings/asaas', label: 'Pagamentos', icon: Icons.asaas, key: 'asaas', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
