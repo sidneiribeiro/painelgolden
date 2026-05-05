@@ -13,7 +13,6 @@ const pageTitles: Record<string, string> = {
   '/packages': 'Pacotes',
   '/bouquets': 'Bouquets',
   '/users': 'Usuários',
-  '/settings/xui-connection': 'Servidores',
   '/settings/notifications': 'Notificações',
   '/settings/access-groups': 'Grupos de Acesso',
   '/settings/panel': 'Configurações',

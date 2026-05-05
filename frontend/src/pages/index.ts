@@ -7,7 +7,6 @@ export { CustomersPage } from './CustomersPage';
 export { NotFoundPage } from './NotFoundPage';
 
 // Settings
-export { XuiConnectionPage } from './settings/XuiConnectionPage';
 export { NotificationsPage } from './settings/NotificationsPage';
 export { AsaasPage } from './settings/AsaasPage';
 export { TMDBKeysPage } from './settings/TMDBKeysPage';

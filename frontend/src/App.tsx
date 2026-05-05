@@ -5,7 +5,6 @@ import {
   DashboardPage,
   CustomersPage,
   NotFoundPage,
-  XuiConnectionPage,
   NotificationsPage,
   AccessGroupsPage,
   UsersPage,
@@ -113,7 +112,6 @@ function App() {
               <Route path="bouquets" element={<BouquetsPage />} />
               <Route path="users" element={<UsersPage />} />
               <Route path="settings">
-                <Route path="xui-connection" element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN']}><XuiConnectionPage /></RoleProtectedRoute>} />
                 <Route path="notifications" element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN']} menuKey="notifications"><NotificationsPage /></RoleProtectedRoute>} />
                 <Route path="access-groups" element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN']}><AccessGroupsPage /></RoleProtectedRoute>} />
                 <Route path="panel" element={<PanelSettingsPage />} />
