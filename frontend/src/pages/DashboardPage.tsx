@@ -4,6 +4,7 @@ import { Card, Badge, Spinner, Button, Modal } from '../components/ui';
 import { api } from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import toast from 'react-hot-toast';
+import { Activity, AlertTriangle, Clock, LayoutDashboard, Server, UserCheck, Users } from 'lucide-react';
 
 interface DashboardData {
   stats: {
@@ -26,6 +27,30 @@ interface DashboardData {
     expires_at: string;
     days_until_expiry: number;
   }>;
+  core?: {
+    balances: Array<{
+      id: string;
+      name: string;
+      host: string | null;
+      httpPort: number;
+      httpsPort: number;
+      installedAt: string | null;
+      createdAt: string;
+      isActive: boolean;
+    }>;
+    liveConnections: Array<{
+      id: string;
+      username: string | null;
+      contentType: string;
+      contentPublicId: number | null;
+      contentName: string | null;
+      serverHost: string | null;
+      ipAddress: string | null;
+      userAgent: string | null;
+      startedAt: string;
+      lastSeenAt: string;
+    }>;
+  };
 }
 
 export function DashboardPage() {
@@ -140,6 +165,19 @@ export function DashboardPage() {
     expiring_soon: 0,
   };
 
+  const coreBalances = data?.core?.balances || [];
+  const coreLiveConnections = data?.core?.liveConnections || [];
+
+  const formatElapsed = (iso: string) => {
+    const started = new Date(iso).getTime();
+    const totalSec = Math.max(0, Math.floor((Date.now() - started) / 1000));
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    if (h > 0) return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  };
+
   return (
     <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
       {/* Header */}
@@ -172,25 +210,25 @@ export function DashboardPage() {
         <StatCard
           title="Total de Clientes"
           value={stats.total_lines}
-          icon="👥"
+          icon={<Users className="w-6 h-6 text-cyan-300" />}
           color="cyan"
         />
         <StatCard
           title="Clientes Ativos"
           value={stats.active_lines}
-          icon="✅"
+          icon={<UserCheck className="w-6 h-6 text-green-300" />}
           color="green"
         />
         <StatCard
           title="Expirados"
           value={stats.expired_lines}
-          icon="⏰"
+          icon={<Clock className="w-6 h-6 text-red-300" />}
           color="red"
         />
         <StatCard
           title="Vencendo em 7 dias"
           value={stats.expiring_soon}
-          icon="⚠️"
+          icon={<AlertTriangle className="w-6 h-6 text-yellow-300" />}
           color="yellow"
         />
       </div>
@@ -233,6 +271,111 @@ export function DashboardPage() {
           </div>
         </Card>
       )}
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        <Card className="p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white flex items-center gap-2">
+              <LayoutDashboard className="w-5 h-5 text-cyan-400" />
+              Últimos Clientes
+            </h3>
+            <Badge variant="default">{data?.recentCustomers?.length || 0}</Badge>
+          </div>
+
+          {data?.recentCustomers && data.recentCustomers.length > 0 ? (
+            <div className="space-y-3">
+              {data.recentCustomers.slice(0, 5).map((customer) => (
+                <div
+                  key={customer.id}
+                  className="flex items-center justify-between p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg border border-zinc-200 dark:border-zinc-700"
+                >
+                  <div>
+                    <p className="text-zinc-900 dark:text-white font-mono">{customer.username}</p>
+                    <p className="text-xs text-zinc-600 dark:text-zinc-500">
+                      Expira:{' '}
+                      {new Date(customer.expires_at).toLocaleDateString('pt-BR', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        timeZone: 'America/Sao_Paulo',
+                      })}
+                    </p>
+                  </div>
+                  <Badge variant={customer.status === 'ACTIVE' ? 'default' : customer.status === 'EXPIRED' ? 'error' : 'warning'}>
+                    {customer.status}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-zinc-600 dark:text-zinc-500 text-center py-6">Nenhum cliente cadastrado ainda</p>
+          )}
+        </Card>
+
+        <Card className="p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white flex items-center gap-2">
+              <Server className="w-5 h-5 text-blue-400" />
+              Balances (Xtream Novo)
+            </h3>
+            <Badge variant="default">{coreBalances.length}</Badge>
+          </div>
+
+          {coreBalances.length > 0 ? (
+            <div className="space-y-3">
+              {coreBalances.slice(0, 5).map((s) => (
+                <div
+                  key={s.id}
+                  className="flex items-center justify-between p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg border border-zinc-200 dark:border-zinc-700"
+                >
+                  <div>
+                    <p className="text-zinc-900 dark:text-white">{s.name}</p>
+                    <p className="text-xs text-zinc-600 dark:text-zinc-500">
+                      {s.host ? `${s.host}:${s.httpPort}` : 'Sem host'}
+                    </p>
+                  </div>
+                  <Badge variant={s.installedAt ? 'default' : 'warning'}>{s.installedAt ? 'INSTALADO' : 'PENDENTE'}</Badge>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-zinc-600 dark:text-zinc-500 text-center py-6">Nenhum balance cadastrado</p>
+          )}
+        </Card>
+
+        <Card className="p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white flex items-center gap-2">
+              <Activity className="w-5 h-5 text-emerald-400" />
+              Conexões (Xtream Novo)
+            </h3>
+            <Badge variant="default">{coreLiveConnections.length}</Badge>
+          </div>
+
+          {coreLiveConnections.length > 0 ? (
+            <div className="space-y-3">
+              {coreLiveConnections.slice(0, 5).map((c) => (
+                <div
+                  key={c.id}
+                  className="flex items-center justify-between p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg border border-zinc-200 dark:border-zinc-700"
+                >
+                  <div className="min-w-0">
+                    <p className="text-zinc-900 dark:text-white truncate">
+                      {c.username || '—'} • {c.contentName || c.contentType}
+                    </p>
+                    <p className="text-xs text-zinc-600 dark:text-zinc-500 truncate">
+                      {c.serverHost || '—'}
+                    </p>
+                  </div>
+                  <Badge variant="default">{formatElapsed(c.startedAt)}</Badge>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-zinc-600 dark:text-zinc-500 text-center py-6">Nenhuma conexão ao vivo agora</p>
+          )}
+        </Card>
+      </div>
 
       {/* Grid de conteúdo */}
       <div className="grid gap-6 lg:grid-cols-2">
@@ -585,7 +728,7 @@ function StatCard({
 }: {
   title: string;
   value: number;
-  icon: string;
+  icon: React.ReactNode;
   color: 'cyan' | 'green' | 'red' | 'yellow';
 }) {
   const colorClasses = {

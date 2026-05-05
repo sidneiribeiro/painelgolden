@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PainelMaster — instalador oficial (Ubuntu 20.04/22.04/24.04 ou Debian 11/12)
+# Xtream Novo — instalador oficial (Ubuntu 20.04/22.04/24.04 ou Debian 11/12)
 # Uso:
 #   sudo bash install.sh                                   # interativo
 #   sudo DOMAIN=x.com EMAIL=y@z.com bash install.sh --ssl  # automático com SSL
@@ -26,7 +26,7 @@ cd "$(dirname "$(readlink -f "$0")")"
 
 cat <<'BANNER'
 ╔═══════════════════════════════════════════════════════════════╗
-║              PainelMaster — Instalador Oficial                ║
+║               Xtream Novo — Instalador Oficial                ║
 ╚═══════════════════════════════════════════════════════════════╝
 BANNER
 

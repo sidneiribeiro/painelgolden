@@ -12,12 +12,16 @@ export const getDashboard = asyncHandler(async (req: Request, res: Response) => 
   const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
   const startOfToday = new Date(now);
   startOfToday.setHours(0, 0, 0, 0);
+  const freshAfter = new Date(now.getTime() - 90_000);
 
   // Construir where clause baseado no role do usuário
   const where: any = {};
   if (!['SUPER_ADMIN', 'ADMIN'].includes(currentUser.role)) {
     where.resellerUserId = currentUser.userId;
   }
+
+  const isAdmin = ['SUPER_ADMIN', 'ADMIN'].includes(currentUser.role);
+  const coreOwnerWhere = isAdmin ? {} : { ownerId: currentUser.userId };
 
   // Buscar todos os clientes do usuário
   const allCustomers = await prisma.customer.findMany({
@@ -105,12 +109,112 @@ export const getDashboard = asyncHandler(async (req: Request, res: Response) => 
   // Clientes online (vazio por enquanto, pode ser implementado depois)
   const onlineCustomers: any[] = [];
 
+  const [coreEdgeServers, coreSessions] = await Promise.all([
+    prisma.coreEdgeServer
+      .findMany({
+        where: { ...coreOwnerWhere, isActive: true },
+        orderBy: [{ createdAt: 'desc' }],
+        take: 10,
+        select: {
+          id: true,
+          name: true,
+          domain: true,
+          ip: true,
+          httpPort: true,
+          httpsPort: true,
+          installedAt: true,
+          createdAt: true,
+          isActive: true,
+        },
+      })
+      .catch(() => [] as any[]),
+    prisma.corePlaybackSession
+      .findMany({
+        where: {
+          endedAt: null,
+          status: 'active',
+          lastSeenAt: { gt: freshAfter },
+          line: coreOwnerWhere,
+        },
+        select: {
+          id: true,
+          contentType: true,
+          contentPublicId: true,
+          serverHost: true,
+          ipAddress: true,
+          userAgent: true,
+          startedAt: true,
+          lastSeenAt: true,
+          line: { select: { username: true } },
+        },
+        orderBy: [{ lastSeenAt: 'desc' }],
+        take: 20,
+      })
+      .catch(() => [] as any[]),
+  ]);
+
+  const liveIds = Array.from(
+    new Set(coreSessions.filter((s) => s.contentType === 'live' && typeof s.contentPublicId === 'number').map((s) => s.contentPublicId as number))
+  );
+  const movieIds = Array.from(
+    new Set(coreSessions.filter((s) => s.contentType === 'movie' && typeof s.contentPublicId === 'number').map((s) => s.contentPublicId as number))
+  );
+  const seriesIds = Array.from(
+    new Set(coreSessions.filter((s) => s.contentType === 'series' && typeof s.contentPublicId === 'number').map((s) => s.contentPublicId as number))
+  );
+
+  const [liveStreams, movies, seriesEpisodes] = await Promise.all([
+    liveIds.length
+      ? prisma.coreStream.findMany({ where: { publicId: { in: liveIds } }, select: { publicId: true, name: true } }).catch(() => [])
+      : Promise.resolve([] as any[]),
+    movieIds.length
+      ? prisma.coreVodItem.findMany({ where: { publicId: { in: movieIds } }, select: { publicId: true, name: true } }).catch(() => [])
+      : Promise.resolve([] as any[]),
+    seriesIds.length
+      ? prisma.coreSeriesEpisode.findMany({ where: { publicId: { in: seriesIds } }, select: { publicId: true, title: true } }).catch(() => [])
+      : Promise.resolve([] as any[]),
+  ]);
+
+  const liveNameById = new Map(liveStreams.map((s: any) => [s.publicId, s.name] as const));
+  const movieNameById = new Map(movies.map((s: any) => [s.publicId, s.name] as const));
+  const seriesNameById = new Map(seriesEpisodes.map((s: any) => [s.publicId, s.title] as const));
+
   res.json({
     data: {
       stats,
       recentCustomers,
       expiringCustomers,
       onlineCustomers,
+      core: {
+        balances: coreEdgeServers.map((s: any) => ({
+          id: s.id,
+          name: s.name,
+          host: (s.domain || s.ip || '').trim() || null,
+          httpPort: s.httpPort,
+          httpsPort: s.httpsPort,
+          installedAt: s.installedAt,
+          createdAt: s.createdAt,
+          isActive: s.isActive,
+        })),
+        liveConnections: coreSessions.map((s: any) => {
+          let contentName: string | null = null;
+          if (s.contentType === 'live') contentName = typeof s.contentPublicId === 'number' ? liveNameById.get(s.contentPublicId) || null : null;
+          if (s.contentType === 'movie') contentName = typeof s.contentPublicId === 'number' ? movieNameById.get(s.contentPublicId) || null : null;
+          if (s.contentType === 'series') contentName = typeof s.contentPublicId === 'number' ? seriesNameById.get(s.contentPublicId) || null : null;
+          return {
+            id: s.id,
+            username: s.line?.username || null,
+            contentType: s.contentType,
+            contentPublicId: s.contentPublicId ?? null,
+            contentName,
+            serverHost: s.serverHost || null,
+            ipAddress: s.ipAddress || null,
+            userAgent: s.userAgent || null,
+            startedAt: s.startedAt,
+            lastSeenAt: s.lastSeenAt,
+          };
+        }),
+      },
       server: null, // Não necessário mais, mas mantém compatibilidade
     },
   });
