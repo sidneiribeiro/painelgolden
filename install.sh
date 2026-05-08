@@ -127,6 +127,33 @@ if [[ ! -f .env ]]; then
   if [[ -n "$DOMAIN" ]]; then
     sed -i "s#painel.seudominio.com#${DOMAIN}#g" .env
   fi
+
+  if [[ $ENABLE_SSL -eq 0 ]]; then
+    sed -i 's#^FRONTEND_URL=https://#FRONTEND_URL=http://#' .env
+    sed -i 's#^API_URL=https://#API_URL=http://#' .env
+    sed -i '/^ALLOWED_ORIGINS=/ s#https://#http://#g' .env
+    if grep -q '^ENABLE_HSTS=' .env; then
+      sed -i 's/^ENABLE_HSTS=.*/ENABLE_HSTS=false/' .env
+    else
+      echo 'ENABLE_HSTS=false' >> .env
+    fi
+    if grep -q '^EDGE_FORCE_HTTP=' .env; then
+      sed -i 's/^EDGE_FORCE_HTTP=.*/EDGE_FORCE_HTTP=true/' .env
+    else
+      echo 'EDGE_FORCE_HTTP=true' >> .env
+    fi
+    if grep -q '^COOKIE_SECURE=' .env; then
+      sed -i 's/^COOKIE_SECURE=.*/COOKIE_SECURE=false/' .env
+    else
+      echo 'COOKIE_SECURE=false' >> .env
+    fi
+  else
+    if grep -q '^COOKIE_SECURE=' .env; then
+      sed -i 's/^COOKIE_SECURE=.*/COOKIE_SECURE=true/' .env
+    else
+      echo 'COOKIE_SECURE=true' >> .env
+    fi
+  fi
   chmod 600 .env
   ok ".env gerado."
 else

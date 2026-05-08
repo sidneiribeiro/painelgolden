@@ -44,6 +44,14 @@ function generateTokens(user: { id: string; username: string; email: string; rol
   return { accessToken, refreshToken };
 }
 
+function getCookieSecure(req: Request) {
+  const raw = String(process.env.COOKIE_SECURE || '').trim().toLowerCase();
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  const xfProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0]?.trim();
+  return req.secure || xfProto === 'https';
+}
+
 function normalizeMenuPermissions(raw: any): string | null {
   if (!raw) return null;
   try {
@@ -120,7 +128,7 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
   // Define cookie httpOnly para o token
   res.cookie('accessToken', accessToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: getCookieSecure(req),
     sameSite: 'lax',
     maxAge: 1000 * 60 * 60 * 24, // 24 horas
   });
@@ -303,7 +311,7 @@ export const refreshToken = asyncHandler(async (req: Request, res: Response) => 
 
     res.cookie('accessToken', accessToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: getCookieSecure(req),
       sameSite: 'lax',
       maxAge: 1000 * 60 * 60 * 24,
     });
