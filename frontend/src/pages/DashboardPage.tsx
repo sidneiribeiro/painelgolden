@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, Badge, Spinner, Button, Modal } from '../components/ui';
 import { api } from '../api/client';
@@ -53,6 +53,41 @@ interface DashboardData {
   };
 }
 
+type CoreBouquet = {
+  id: string;
+  name: string;
+  isActive: boolean;
+  _count?: { streams: number };
+};
+
+type CoreEdgeServersMetricsResponse = {
+  data: {
+    checkedAt: string;
+    total: number;
+    results: Array<{
+      serverId: string;
+      serverName?: string;
+      ok: boolean;
+      ms: number;
+      status: number | null;
+      url: string | null;
+      error: string | null;
+      metrics: {
+        timestamp?: string;
+        uptimeSeconds?: number | null;
+        cpuPercent?: number | null;
+        memPercent?: number | null;
+        net?: { rxBytes: string; txBytes: string } | null;
+        activeConnections?: number | null;
+        activeUsers?: number | null;
+        flowsOn?: number | null;
+        flowsOff?: number | null;
+        host?: string | null;
+      } | null;
+    }>;
+  };
+};
+
 export function DashboardPage() {
   const user = useAuthStore((state) => state.user);
   const queryClient = useQueryClient();
@@ -62,6 +97,8 @@ export function DashboardPage() {
   const [testHours, setTestHours] = useState(6);
   const [testResult, setTestResult] = useState<any>(null);
   const [selectedQuickTestPkgId, setSelectedQuickTestPkgId] = useState<string>('');
+  const prevServerNetRef = useRef<Record<string, { rxBytes: bigint; txBytes: bigint; tsMs: number }>>({});
+  const [serverNetRates, setServerNetRates] = useState<Record<string, { rxMbps: number; txMbps: number }>>({});
 
   // Busca dados do dashboard
   const { data, isLoading, error } = useQuery({
@@ -73,12 +110,59 @@ export function DashboardPage() {
     refetchInterval: 60000, // Atualiza a cada 1 minuto
   });
 
-  // Busca pacotes disponíveis
-  const { data: packagesData } = useQuery({
-    queryKey: ['packages-for-select'],
+  const { data: coreBouquets = [] } = useQuery({
+    queryKey: ['core-bouquets-dashboard'],
     queryFn: async () => {
-      const res = await api.get('/packages-local/for-select');
-      return res.data.data;
+      const res = await api.get('/core/bouquets');
+      return (res.data.data || []) as CoreBouquet[];
+    },
+  });
+
+  const {
+    data: serversMetrics,
+    refetch: refetchServersMetrics,
+    isFetching: serversMetricsLoading,
+  } = useQuery({
+    queryKey: ['core-servers-metrics-dashboard'],
+    queryFn: async () => {
+      const res = await api.get('/core/servers/metrics');
+      return res.data as CoreEdgeServersMetricsResponse;
+    },
+    refetchInterval: 15000,
+    onSuccess: (payload: CoreEdgeServersMetricsResponse) => {
+      const now = Date.now();
+      const nextPrev: Record<string, { rxBytes: bigint; txBytes: bigint; tsMs: number }> = { ...prevServerNetRef.current };
+      const computedRates: Record<string, { rxMbps: number; txMbps: number }> = {};
+
+      for (const r of payload.data.results || []) {
+        if (!r?.serverId) continue;
+        const rxStr = r.metrics?.net?.rxBytes;
+        const txStr = r.metrics?.net?.txBytes;
+        if (!rxStr || !txStr) continue;
+
+        let rxBytes = 0n;
+        let txBytes = 0n;
+        try { rxBytes = BigInt(String(rxStr)); } catch {}
+        try { txBytes = BigInt(String(txStr)); } catch {}
+
+        const prev = prevServerNetRef.current[r.serverId];
+        if (prev && now > prev.tsMs) {
+          const dtSec = Math.max(0.5, (now - prev.tsMs) / 1000);
+          const drx = rxBytes >= prev.rxBytes ? rxBytes - prev.rxBytes : 0n;
+          const dtx = txBytes >= prev.txBytes ? txBytes - prev.txBytes : 0n;
+          const rxMbps = Number(drx) * 8 / dtSec / 1_000_000;
+          const txMbps = Number(dtx) * 8 / dtSec / 1_000_000;
+          computedRates[r.serverId] = {
+            rxMbps: Number.isFinite(rxMbps) ? Math.max(0, rxMbps) : 0,
+            txMbps: Number.isFinite(txMbps) ? Math.max(0, txMbps) : 0,
+          };
+        }
+
+        nextPrev[r.serverId] = { rxBytes, txBytes, tsMs: now };
+      }
+
+      prevServerNetRef.current = nextPrev;
+      setServerNetRates((prev) => ({ ...prev, ...computedRates }));
     },
   });
 
@@ -177,6 +261,64 @@ export function DashboardPage() {
     if (h > 0) return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   };
+
+  const formatMbps = (val?: number | null) => {
+    const n = typeof val === 'number' ? val : 0;
+    if (!Number.isFinite(n) || n <= 0) return '0 Mbps';
+    if (n < 1) return `${n.toFixed(2)} Mbps`;
+    if (n < 10) return `${n.toFixed(2)} Mbps`;
+    return `${n.toFixed(1)} Mbps`;
+  };
+
+  const formatUptime = (seconds?: number | null) => {
+    if (seconds === null || seconds === undefined) return '-';
+    const total = Math.max(0, Math.floor(seconds));
+    const d = Math.floor(total / 86400);
+    const h = Math.floor((total % 86400) / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    if (d > 0) return `${d}d ${h}h`;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  };
+
+  const installedServers = coreBalances.filter((s) => s.isActive && !!s.installedAt);
+
+  const serverMetricsById = useMemo(() => {
+    const map: Record<string, CoreEdgeServersMetricsResponse['data']['results'][number]> = {};
+    for (const r of serversMetrics?.data?.results || []) {
+      if (r?.serverId) map[r.serverId] = r;
+    }
+    return map;
+  }, [serversMetrics]);
+
+  const totalsByServers = useMemo(() => {
+    let rx = 0;
+    let tx = 0;
+    let flowsOn = 0;
+    let flowsOff = 0;
+    for (const s of installedServers) {
+      const rate = serverNetRates[s.id];
+      if (rate) {
+        rx += rate.rxMbps || 0;
+        tx += rate.txMbps || 0;
+      }
+      const mt = serverMetricsById[s.id];
+      const fOn = mt?.metrics?.flowsOn;
+      const fOff = mt?.metrics?.flowsOff;
+      flowsOn += typeof fOn === 'number' ? fOn : 0;
+      flowsOff += typeof fOff === 'number' ? fOff : 0;
+    }
+    return { rx, tx, flowsOn, flowsOff };
+  }, [installedServers, serverMetricsById, serverNetRates]);
+
+  const serversOnlineCount = useMemo(() => {
+    let ok = 0;
+    for (const s of installedServers) {
+      const mt = serverMetricsById[s.id];
+      if (mt?.ok) ok++;
+    }
+    return ok;
+  }, [installedServers, serverMetricsById]);
 
   return (
     <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
@@ -377,6 +519,85 @@ export function DashboardPage() {
         </Card>
       </div>
 
+      <Card className="p-5">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Servidores (Balances)</h3>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => refetchServersMetrics()}
+              disabled={serversMetricsLoading}
+            >
+              Refrescar
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+            <div className="text-xs text-zinc-600 dark:text-zinc-400">TOTAL ENTRADAS</div>
+            <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{formatMbps(totalsByServers.rx)}</div>
+          </div>
+          <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+            <div className="text-xs text-zinc-600 dark:text-zinc-400">TOTAL SAÍDAS</div>
+            <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{formatMbps(totalsByServers.tx)}</div>
+          </div>
+          <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+            <div className="text-xs text-zinc-600 dark:text-zinc-400">FLUXOS ON</div>
+            <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{totalsByServers.flowsOn}</div>
+          </div>
+          <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+            <div className="text-xs text-zinc-600 dark:text-zinc-400">SERVIDORES ONLINE</div>
+            <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{serversOnlineCount}/{installedServers.length}</div>
+            <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">OFF: {totalsByServers.flowsOff}</div>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {installedServers.map((s) => {
+            const mt = serverMetricsById[s.id];
+            const rates = serverNetRates[s.id];
+            const cpu = mt?.metrics?.cpuPercent;
+            const mem = mt?.metrics?.memPercent;
+            const uptimeSeconds = mt?.metrics?.uptimeSeconds;
+            const conns = mt?.metrics?.activeConnections;
+            const users = mt?.metrics?.activeUsers;
+            const flowsOn = mt?.metrics?.flowsOn;
+            const flowsOff = mt?.metrics?.flowsOff;
+
+            return (
+              <div key={s.id} className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-semibold text-zinc-900 dark:text-white truncate">{s.name}</div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={mt ? (mt.ok ? 'success' : 'warning') : 'info'}>{mt ? (mt.ok ? 'ONLINE' : 'OFFLINE') : '...'}</Badge>
+                    <span className="text-xs text-zinc-600 dark:text-zinc-400">{mt?.ok ? `${mt.ms} ms` : '-'}</span>
+                  </div>
+                </div>
+
+                <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                  <div className="text-zinc-700 dark:text-zinc-300">Conexões: <span className="font-medium text-zinc-900 dark:text-white">{typeof conns === 'number' ? conns : '-'}</span></div>
+                  <div className="text-zinc-700 dark:text-zinc-300">Utilizadores: <span className="font-medium text-zinc-900 dark:text-white">{typeof users === 'number' ? users : '-'}</span></div>
+                  <div className="text-zinc-700 dark:text-zinc-300">Fluxos ON: <span className="font-medium text-zinc-900 dark:text-white">{typeof flowsOn === 'number' ? flowsOn : '-'}</span></div>
+                  <div className="text-zinc-700 dark:text-zinc-300">Fluxos OFF: <span className="font-medium text-zinc-900 dark:text-white">{typeof flowsOff === 'number' ? flowsOff : '-'}</span></div>
+                  <div className="text-zinc-700 dark:text-zinc-300">Entrada: <span className="font-medium text-zinc-900 dark:text-white">{formatMbps(rates?.rxMbps)}</span></div>
+                  <div className="text-zinc-700 dark:text-zinc-300">Saída: <span className="font-medium text-zinc-900 dark:text-white">{formatMbps(rates?.txMbps)}</span></div>
+                  <div className="text-zinc-700 dark:text-zinc-300">CPU: <span className="font-medium text-zinc-900 dark:text-white">{cpu === null || cpu === undefined ? '-' : `${cpu.toFixed(1)}%`}</span></div>
+                  <div className="text-zinc-700 dark:text-zinc-300">MEM: <span className="font-medium text-zinc-900 dark:text-white">{mem === null || mem === undefined ? '-' : `${mem.toFixed(1)}%`}</span></div>
+                  <div className="text-zinc-700 dark:text-zinc-300">Uptime: <span className="font-medium text-zinc-900 dark:text-white">{formatUptime(uptimeSeconds)}</span></div>
+                  <div className="text-zinc-700 dark:text-zinc-300">Host: <span className="font-medium text-zinc-900 dark:text-white">{s.host || '-'}</span></div>
+                </div>
+
+                {!mt?.ok && mt?.error ? (
+                  <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400 truncate">{mt.error}</div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+
       {/* Grid de conteúdo */}
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Clientes vencendo */}
@@ -425,36 +646,32 @@ export function DashboardPage() {
           )}
         </Card>
 
-        {/* Pacotes disponíveis */}
         <Card className="p-5">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">📦 Pacotes Disponíveis</h3>
-            <Badge variant="default">{packagesData?.length || 0}</Badge>
+            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Bouquets (Xtream Novo)</h3>
+            <Badge variant="default">{coreBouquets.length}</Badge>
           </div>
 
-          {packagesData && packagesData.length > 0 ? (
+          {coreBouquets.length > 0 ? (
             <div className="space-y-3">
-              {packagesData.slice(0, 5).map((pkg: any) => (
+              {coreBouquets.slice(0, 5).map((b) => (
                 <div
-                  key={pkg.value}
+                  key={b.id}
                   className="flex items-center justify-between p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg border border-zinc-200 dark:border-zinc-700"
                 >
-                  <div>
-                    <p className="text-zinc-900 dark:text-white">{pkg.label}</p>
-                    <p className="text-xs text-zinc-600 dark:text-zinc-500">{pkg.serverName}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-blue-600 dark:text-cyan-400 font-medium">{pkg.credits} créditos</p>
-                    <p className="text-xs text-green-600 dark:text-green-400">
-                      R$ {(pkg.planPrice / 100).toFixed(2)}
+                  <div className="min-w-0">
+                    <p className="text-zinc-900 dark:text-white truncate">{b.name}</p>
+                    <p className="text-xs text-zinc-600 dark:text-zinc-500">
+                      Streams: {typeof b._count?.streams === 'number' ? b._count.streams : 0}
                     </p>
                   </div>
+                  <Badge variant={b.isActive ? 'default' : 'warning'}>{b.isActive ? 'ATIVO' : 'INATIVO'}</Badge>
                 </div>
               ))}
             </div>
           ) : (
             <p className="text-zinc-600 dark:text-zinc-500 text-center py-6">
-              Nenhum pacote configurado. Sincronize do XUI primeiro.
+              Nenhum bouquet criado no Xtream Novo
             </p>
           )}
         </Card>

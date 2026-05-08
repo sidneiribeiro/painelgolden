@@ -40,6 +40,27 @@ function stripApiSuffix(url: string) {
   return (url || '').replace(/\/api\/?$/, '').replace(/\/$/, '');
 }
 
+function normalizeEdgeHost(raw: string) {
+  let s = String(raw || '').trim();
+  s = s.replace(/^https?:\/\//i, '');
+  s = s.replace(/\/.*$/, '');
+  s = s.replace(/[`"' \t\r\n]+/g, '');
+  return s;
+}
+
+function splitHostAndPort(rawHost: string): { host: string; port?: number } {
+  const s = normalizeEdgeHost(rawHost);
+  const mIp = s.match(/^(\d{1,3}(?:\.\d{1,3}){3})(?::(\d{1,5}))?$/);
+  if (mIp) {
+    const port = mIp[2] ? parseInt(mIp[2], 10) : undefined;
+    return { host: mIp[1], port: port && Number.isFinite(port) ? port : undefined };
+  }
+  const mHost = s.match(/^(.+?)(?::(\d{1,5}))?$/);
+  if (!mHost) return { host: s };
+  const port = mHost[2] ? parseInt(mHost[2], 10) : undefined;
+  return { host: mHost[1], port: port && Number.isFinite(port) ? port : undefined };
+}
+
 function getRequestBaseUrl(req: Request) {
   const proto = (req.headers['x-forwarded-proto'] as string | undefined) || req.protocol || 'http';
   const host = (req.headers['x-forwarded-host'] as string | undefined) || req.get('host') || '';
@@ -106,17 +127,20 @@ async function maybeRedirectToEdge(req: Request, res: Response, ownerId: string,
   if (!servers.length) return false;
 
   const proto = (req.headers['x-forwarded-proto'] as string | undefined) || req.protocol || 'http';
-  const scheme = proto === 'https' ? 'https' : 'http';
   const idx = pickCandidateStartIndex(seed, servers.length);
   const chosen = servers[idx];
-  const port = scheme === 'https' ? chosen.httpsPort : chosen.httpPort;
+  const forceHttp = String(process.env.EDGE_FORCE_HTTP || '').trim() === 'true';
+  const parsed = splitHostAndPort(chosen.host);
+  const isIpHost = /^\d{1,3}(\.\d{1,3}){3}$/.test(parsed.host);
+  const scheme = forceHttp ? 'http' : !isIpHost && (chosen.httpsPort || 0) > 0 ? 'https' : 'http';
+  const port = parsed.port ?? (scheme === 'https' ? chosen.httpsPort : chosen.httpPort);
   const omitPort = (scheme === 'http' && port === 80) || (scheme === 'https' && port === 443);
-  const hostWithPort = omitPort ? chosen.host : `${chosen.host}:${Math.max(1, port)}`;
+  const hostWithPort = omitPort ? parsed.host : `${parsed.host}:${Math.max(1, port)}`;
 
   const currentHost = ((req.headers['x-forwarded-host'] as string | undefined) || req.get('host') || '').trim();
   if (currentHost && currentHost === hostWithPort) return false;
 
-  const target = `${scheme}://${hostWithPort}${req.originalUrl}`;
+  const target = `${scheme}://${hostWithPort}${req.originalUrl}`.replace(/[`"' \t\r\n]+/g, '');
   res.redirect(302, target);
   return true;
 }

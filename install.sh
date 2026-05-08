@@ -13,11 +13,13 @@ warn() { echo -e "${YELLOW}⚠  $*${NC}"; }
 err()  { echo -e "${RED}✘  $*${NC}" >&2; }
 
 NON_INTERACTIVE=0; ENABLE_SSL=0; SKIP_NGINX=0
+APPLY_EDGE_ALLOWLIST=0
 for arg in "$@"; do
   case "$arg" in
     --non-interactive) NON_INTERACTIVE=1 ;;
     --ssl) ENABLE_SSL=1 ;;
     --no-nginx) SKIP_NGINX=1 ;;
+    --apply-edge-allowlist) APPLY_EDGE_ALLOWLIST=1 ;;
   esac
 done
 
@@ -63,6 +65,34 @@ read_var() {
   printf -v "$var" '%s' "$value"
 }
 
+EDGE_POSTGRES_ALLOWLIST="${EDGE_POSTGRES_ALLOWLIST:-}"
+
+if [[ $APPLY_EDGE_ALLOWLIST -eq 1 ]]; then
+  NON_INTERACTIVE=1
+  if [[ -z "$EDGE_POSTGRES_ALLOWLIST" ]]; then
+    err "Defina EDGE_POSTGRES_ALLOWLIST (CSV) para aplicar (ex: EDGE_POSTGRES_ALLOWLIST=164.163.9.90,164.163.9.91)"
+    exit 1
+  fi
+  log "Aplicando allowlist do Postgres para balances: $EDGE_POSTGRES_ALLOWLIST"
+  if grep -q '"127.0.0.1:5432:5432"' docker-compose.yml; then
+    sed -i 's#"127.0.0.1:5432:5432"#"0.0.0.0:5432:5432"#g' docker-compose.yml
+    ok "Postgres exposto em 0.0.0.0:5432 (restrinja via firewall)"
+  fi
+  docker compose up -d postgres
+  if command -v ufw >/dev/null 2>&1; then
+    IFS=',' read -r -a edge_ips <<<"$EDGE_POSTGRES_ALLOWLIST"
+    for ip in "${edge_ips[@]}"; do
+      ip="$(echo "$ip" | xargs)"
+      [[ -z "$ip" ]] && continue
+      ufw allow from "$ip" to any port 5432 proto tcp >/dev/null 2>&1 || true
+    done
+    ufw deny 5432/tcp >/dev/null 2>&1 || true
+    ufw reload >/dev/null 2>&1 || true
+  fi
+  ok "Allowlist aplicada. Verifique: ufw status | grep 5432"
+  exit 0
+fi
+
 read_var DOMAIN         "Domínio público (ex.: painel.cliente.com)" ""
 read_var EMAIL          "Email para Let's Encrypt" ""
 read_var ADMIN_USERNAME "Usuário SUPER_ADMIN inicial" "admin"
@@ -73,8 +103,6 @@ if [[ -z "$ADMIN_PASSWORD" ]]; then
   ADMIN_PASSWORD="$(openssl rand -base64 16 | tr -d '=+/' | cut -c1-16)"
   warn "Senha gerada automaticamente: $ADMIN_PASSWORD"
 fi
-
-EDGE_POSTGRES_ALLOWLIST="${EDGE_POSTGRES_ALLOWLIST:-}"
 
 # 3. Gerar .env
 if [[ ! -f .env ]]; then

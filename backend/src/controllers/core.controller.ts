@@ -73,6 +73,47 @@ const toInt = (val: any, defaultVal: number): number => {
   return defaultVal;
 };
 
+const shQuote = (val: string) => `'${String(val || '').replace(/'/g, `'\\''`)}'`;
+
+const normalizeVpnIp = (val: string) => String(val || '').trim().replace(/\s+/g, '');
+
+const vpnIpHost = (val: string) => normalizeVpnIp(val).replace(/\/\d+$/, '');
+
+async function ensureAutoVpnIp(ownerId: string, serverId: string) {
+  const existing = await prisma.coreEdgeServer.findFirst({
+    where: { id: serverId, ownerId },
+    select: { vpnIp: true },
+  });
+  const already = normalizeVpnIp((existing as any)?.vpnIp || '');
+  if (already) return already;
+
+  const servers = await prisma.coreEdgeServer.findMany({
+    where: { ownerId },
+    select: { vpnIp: true },
+  });
+  const used = new Set(
+    servers
+      .map((s) => vpnIpHost(String((s as any)?.vpnIp || '')))
+      .filter((ip) => ip.startsWith('10.8.0.')),
+  );
+
+  let chosen = '';
+  for (let last = 3; last <= 254; last++) {
+    const ip = `10.8.0.${last}`;
+    if (!used.has(ip)) {
+      chosen = `${ip}/32`;
+      break;
+    }
+  }
+  if (!chosen) throw new AppError(500, 'Sem IP livre na faixa 10.8.0.3-254 para VPN');
+
+  await prisma.coreEdgeServer.updateMany({
+    where: { id: serverId, ownerId },
+    data: { vpnIp: chosen } as any,
+  });
+  return chosen;
+}
+
 const streamSchema = z.object({
   name: z.string().min(1),
   streamUrl: z.string().min(1),
@@ -930,7 +971,9 @@ export const getEdgeServersStatus = asyncHandler(async (req: Request, res: Respo
   const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
   const checkOne = async (server: { id: string; domain: string | null; ip: string | null; httpPort: number; httpsPort: number }) => {
-    const host = (server.domain || server.ip || '').trim();
+    const domain = (server.domain || '').trim();
+    const ip = (server.ip || '').trim();
+    const host = (domain || ip || '').trim();
     if (!host) {
       return { serverId: server.id, ok: false, ms: 0, status: null as number | null, url: null as string | null, error: 'Sem domínio/IP' };
     }
@@ -939,11 +982,14 @@ export const getEdgeServersStatus = asyncHandler(async (req: Request, res: Respo
 
     const httpPort = typeof server.httpPort === 'number' ? server.httpPort : 80;
     const httpsPort = typeof server.httpsPort === 'number' ? server.httpsPort : 443;
-
+    const preferHttps = !!domain;
+    if (preferHttps && httpsPort > 0) {
+      const httpsUrl = `https://${host}${httpsPort === 443 ? '' : `:${httpsPort}`}/health`;
+      candidates.push({ url: httpsUrl, https: true });
+    }
     const httpUrl = `http://${host}${httpPort === 80 ? '' : `:${httpPort}`}/health`;
     candidates.push({ url: httpUrl, https: false });
-
-    if (httpsPort > 0) {
+    if (!preferHttps && httpsPort > 0) {
       const httpsUrl = `https://${host}${httpsPort === 443 ? '' : `:${httpsPort}`}/health`;
       candidates.push({ url: httpsUrl, https: true });
     }
@@ -954,7 +1000,7 @@ export const getEdgeServersStatus = asyncHandler(async (req: Request, res: Respo
       try {
         const r = await axios.get(c.url, {
           timeout: 5000,
-          maxRedirects: 2,
+          maxRedirects: 5,
           validateStatus: () => true,
           httpsAgent: c.https ? httpsAgent : undefined,
         });
@@ -1000,7 +1046,9 @@ export const getEdgeServersMetrics = asyncHandler(async (req: Request, res: Resp
     httpsPort: number;
     edgeTokenEnc: string | null;
   }) => {
-    const host = (server.domain || server.ip || '').trim();
+    const domain = (server.domain || '').trim();
+    const ip = (server.ip || '').trim();
+    const host = (domain || ip || '').trim();
     if (!host) {
       return { serverId: server.id, ok: false, ms: 0, status: null as number | null, url: null as string | null, error: 'Sem domínio/IP', metrics: null as any };
     }
@@ -1012,10 +1060,14 @@ export const getEdgeServersMetrics = asyncHandler(async (req: Request, res: Resp
     const candidates: Array<{ url: string; https: boolean }> = [];
     const httpPort = typeof server.httpPort === 'number' ? server.httpPort : 80;
     const httpsPort = typeof server.httpsPort === 'number' ? server.httpsPort : 443;
-
+    const preferHttps = !!domain;
+    if (preferHttps && httpsPort > 0) {
+      const httpsUrl = `https://${host}${httpsPort === 443 ? '' : `:${httpsPort}`}/api/edge/metrics`;
+      candidates.push({ url: httpsUrl, https: true });
+    }
     const httpUrl = `http://${host}${httpPort === 80 ? '' : `:${httpPort}`}/api/edge/metrics`;
     candidates.push({ url: httpUrl, https: false });
-    if (httpsPort > 0) {
+    if (!preferHttps && httpsPort > 0) {
       const httpsUrl = `https://${host}${httpsPort === 443 ? '' : `:${httpsPort}`}/api/edge/metrics`;
       candidates.push({ url: httpsUrl, https: true });
     }
@@ -1026,30 +1078,46 @@ export const getEdgeServersMetrics = asyncHandler(async (req: Request, res: Resp
       try {
         const r = await axios.get(c.url, {
           timeout: 5000,
-          maxRedirects: 0,
+          maxRedirects: 5,
           validateStatus: () => true,
           headers,
           httpsAgent: c.https ? httpsAgent : undefined,
         });
         const ms = Math.max(0, Date.now() - startedAt);
         const ok = r.status >= 200 && r.status < 300;
-        return {
-          serverId: server.id,
-          serverName: server.name,
-          ok,
-          ms,
-          status: r.status,
-          url: c.url,
-          error: ok ? null : (r.data?.error ? String(r.data.error) : `HTTP ${r.status}`),
-          metrics: ok ? r.data?.data ?? r.data : null,
-        };
+        if (ok) {
+          return {
+            serverId: server.id,
+            serverName: server.name,
+            ok,
+            ms,
+            status: r.status,
+            url: c.url,
+            error: null as string | null,
+            metrics: r.data?.data ?? r.data,
+          };
+        }
+        lastErr = { ms, status: r.status, url: c.url, data: r.data };
       } catch (e: any) {
         lastErr = e;
       }
     }
 
-    const msg = lastErr?.response?.data?.error || lastErr?.message || String(lastErr || 'Erro');
-    return { serverId: server.id, serverName: server.name, ok: false, ms: 0, status: null as number | null, url: null as string | null, error: msg, metrics: null as any };
+    const msg =
+      lastErr?.response?.data?.error ||
+      lastErr?.data?.error ||
+      lastErr?.message ||
+      (lastErr?.status ? `HTTP ${lastErr.status}` : String(lastErr || 'Erro'));
+    return {
+      serverId: server.id,
+      serverName: server.name,
+      ok: false,
+      ms: typeof lastErr?.ms === 'number' ? lastErr.ms : 0,
+      status: typeof lastErr?.status === 'number' ? lastErr.status : null,
+      url: typeof lastErr?.url === 'string' ? lastErr.url : null,
+      error: msg,
+      metrics: null as any,
+    };
   };
 
   const results = await Promise.all(servers.map(fetchOne));
@@ -1403,7 +1471,20 @@ export const startEdgeServerInstallNginxHealthJob = asyncHandler(async (req: Req
 
   const forwardedHostRaw = String(req.headers['x-forwarded-host'] || '').trim();
   const hostHeader = (forwardedHostRaw.split(',')[0]?.trim() || String(req.headers.host || '').trim()).replace(/:\d+$/, '');
-  const mainHost = hostHeader || '127.0.0.1';
+  const mainPublicHost = hostHeader || '127.0.0.1';
+  const vpnDbHost = String(process.env.VPN_DB_HOST || env.VPN_DB_HOST || '10.8.0.1').trim();
+  const edgeVpnIp = await ensureAutoVpnIp(server.ownerId, server.id);
+
+  const wgServerPublicKey = String(process.env.WIREGUARD_SERVER_PUBLIC_KEY || '').trim();
+  const wgPort = String(process.env.WIREGUARD_PORT || '51820').trim() || '51820';
+  const wgAllowedIps = String(process.env.WIREGUARD_ALLOWED_IPS || '10.8.0.1/32').trim() || '10.8.0.1/32';
+  let wgEndpoint = String(process.env.WIREGUARD_ENDPOINT || '').trim();
+  if (!wgEndpoint) {
+    const isIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(mainPublicHost);
+    if (!isIp && mainPublicHost.includes('.')) {
+      wgEndpoint = `vpn.${mainPublicHost}:${wgPort}`;
+    }
+  }
   const mainDbUrlRaw = String(process.env.DATABASE_URL || env.DATABASE_URL || '').trim();
   if (!mainDbUrlRaw || (!mainDbUrlRaw.startsWith('postgresql://') && !mainDbUrlRaw.startsWith('postgres://'))) {
     throw new AppError(500, 'DATABASE_URL do MAIN inválida (esperado postgres)');
@@ -1411,17 +1492,23 @@ export const startEdgeServerInstallNginxHealthJob = asyncHandler(async (req: Req
 
   const u = new URL(mainDbUrlRaw);
   const dbPort = u.port || '5432';
-  u.hostname = mainHost;
+  u.hostname = mainPublicHost;
   u.port = dbPort;
-  const edgeDatabaseUrl = u.toString();
+  const edgeDatabaseUrlPublic = u.toString();
 
   const edgeToken = (server as any).edgeTokenEnc ? decrypt((server as any).edgeTokenEnc) : '';
   const jwtSecret = String(process.env.JWT_SECRET || env.JWT_SECRET || '').trim();
   const jwtRefreshSecret = String(process.env.JWT_REFRESH_SECRET || env.JWT_REFRESH_SECRET || '').trim();
   const encryptionKey = String(process.env.ENCRYPTION_KEY || env.ENCRYPTION_KEY || '').trim();
   const scheme = String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0]?.trim() || 'http';
-  const mainBase = `${scheme}://${mainHost}`;
-  const allowedOrigins = [mainBase, `http://${mainHost}`, `https://${mainHost}`, `http://${sshHost}`, `https://${sshHost}`]
+  const mainBase = `${scheme}://${mainPublicHost}`;
+  const allowedOrigins = [
+    mainBase,
+    `http://${mainPublicHost}`,
+    `https://${mainPublicHost}`,
+    `http://${sshHost}`,
+    `https://${sshHost}`,
+  ]
     .filter(Boolean)
     .map((s) => s.trim())
     .filter((s, idx, arr) => !!s && arr.indexOf(s) === idx)
@@ -1431,7 +1518,7 @@ export const startEdgeServerInstallNginxHealthJob = asyncHandler(async (req: Req
     'NODE_ENV=production',
     'PORT=3001',
     'CORE_EDGE_ONLY=true',
-    `DATABASE_URL=${edgeDatabaseUrl}`,
+    `DATABASE_URL=${edgeDatabaseUrlPublic}`,
     edgeToken ? `EDGE_TOKEN=${edgeToken}` : '',
     jwtSecret ? `JWT_SECRET=${jwtSecret}` : '',
     jwtRefreshSecret ? `JWT_REFRESH_SECRET=${jwtRefreshSecret}` : '',
@@ -1450,7 +1537,7 @@ export const startEdgeServerInstallNginxHealthJob = asyncHandler(async (req: Req
     `set -eu; ` +
     `export DEBIAN_FRONTEND=noninteractive; ` +
     `apt-get update -y; ` +
-    `apt-get install -y nginx git ca-certificates curl docker.io netcat-openbsd; ` +
+    `apt-get install -y nginx git ca-certificates curl docker.io netcat-openbsd wireguard-tools; ` +
     `apt-get install -y docker-compose-plugin || true; ` +
     `systemctl enable --now docker; ` +
     `echo "${confB64}" | base64 -d > /etc/nginx/sites-available/core-edge.conf; ` +
@@ -1459,12 +1546,55 @@ export const startEdgeServerInstallNginxHealthJob = asyncHandler(async (req: Req
     `nginx -t; ` +
     `systemctl restart nginx; ` +
     `systemctl enable nginx; ` +
-    `echo "Verificando acesso ao Postgres do MAIN em ${mainHost}:${dbPort}"; ` +
-    `nc -z -w 3 ${mainHost} ${dbPort} || (echo "ERRO: Balance nao consegue acessar o Postgres do MAIN (${mainHost}:${dbPort}). Libere a porta 5432 no MAIN somente para este balance." && exit 20); ` +
+    `WG_SERVER_PUB=${shQuote(wgServerPublicKey)}; ` +
+    `WG_ENDPOINT=${shQuote(wgEndpoint)}; ` +
+    `WG_ALLOWED_IPS=${shQuote(wgAllowedIps)}; ` +
+    `WG_CLIENT_IP=${shQuote(edgeVpnIp)}; ` +
+    `if [ -n "${'$'}{WG_SERVER_PUB}" ] && [ -n "${'$'}{WG_ENDPOINT}" ] && [ -n "${'$'}{WG_CLIENT_IP}" ]; then ` +
+    `  echo "Configurando WireGuard (wg0) - ${'$'}{WG_CLIENT_IP}"; ` +
+    `  mkdir -p /etc/wireguard; ` +
+    `  umask 077; ` +
+    `  if [ ! -f /etc/wireguard/edge.key ]; then ` +
+    `    wg genkey | tee /etc/wireguard/edge.key | wg pubkey > /etc/wireguard/edge.pub; ` +
+    `  fi; ` +
+    `  EDGE_PRIV="${'$'}(cat /etc/wireguard/edge.key)"; ` +
+    `  EDGE_PUB="${'$'}(cat /etc/wireguard/edge.pub)"; ` +
+    `  cat > /etc/wireguard/wg0.conf <<WG0\n` +
+    `[Interface]\n` +
+    `Address = ${'$'}{WG_CLIENT_IP}\n` +
+    `PrivateKey = ${'$'}{EDGE_PRIV}\n` +
+    `\n` +
+    `[Peer]\n` +
+    `PublicKey = ${'$'}{WG_SERVER_PUB}\n` +
+    `Endpoint = ${'$'}{WG_ENDPOINT}\n` +
+    `AllowedIPs = ${'$'}{WG_ALLOWED_IPS}\n` +
+    `PersistentKeepalive = 25\n` +
+    `WG0\n` +
+    `  systemctl enable --now wg-quick@wg0 >/dev/null 2>&1 || true; ` +
+    `  wg-quick down wg0 >/dev/null 2>&1 || true; ` +
+    `  wg-quick up wg0; ` +
+    `  echo "WIREGUARD: OK (IP ${'$'}{WG_CLIENT_IP})"; ` +
+    `  echo "WIREGUARD: PublicKey do balance: ${'$'}{EDGE_PUB}"; ` +
+    `  echo "WIREGUARD: Adicione no MAIN (wg0.conf):"; ` +
+    `  echo "[Peer]"; ` +
+    `  echo "PublicKey = ${'$'}{EDGE_PUB}"; ` +
+    `  echo "AllowedIPs = ${'$'}{WG_CLIENT_IP}"; ` +
+    `else ` +
+    `  echo "WIREGUARD: ignorado (defina WIREGUARD_SERVER_PUBLIC_KEY e WIREGUARD_ENDPOINT no MAIN)"; ` +
+    `fi; ` +
+    `MAIN_DB_HOST="${mainPublicHost}"; ` +
+    `DB_HOST="${mainPublicHost}"; ` +
+    `if [ -n "${vpnDbHost}" ] && nc -z -w 2 ${vpnDbHost} ${dbPort} >/dev/null 2>&1; then DB_HOST="${vpnDbHost}"; fi; ` +
+    `EDGE_DB_URL="${edgeDatabaseUrlPublic}"; ` +
+    `EDGE_DB_URL="${EDGE_DB_URL//@${mainPublicHost}:/@${'$'}{DB_HOST}:}"; ` +
+    `echo "DB_HOST escolhido: ${'$'}{DB_HOST}"; ` +
+    `echo "Verificando acesso ao Postgres do MAIN em ${'$'}{DB_HOST}:${dbPort}"; ` +
+    `nc -z -w 3 ${'$'}{DB_HOST} ${dbPort} || (echo "ERRO: Balance nao consegue acessar o Postgres do MAIN (${'$'}{DB_HOST}:${dbPort}). Verifique VPN/firewall." && exit 20); ` +
     `mkdir -p /opt/painelmaster-edge; ` +
     `(test -d /opt/painelmaster-edge/.git && (cd /opt/painelmaster-edge && git pull)) || git clone https://github.com/sidneiribeiro/painelmaster.git /opt/painelmaster-edge; ` +
     `mkdir -p /opt/painelmaster-edge/backend; ` +
     `echo "${edgeEnvB64}" | base64 -d > /opt/painelmaster-edge/backend/.env.edge; ` +
+    `sed -i "s|^DATABASE_URL=.*|DATABASE_URL=${'$'}{EDGE_DB_URL}|" /opt/painelmaster-edge/backend/.env.edge; ` +
     `cd /opt/painelmaster-edge/backend; ` +
     `docker build -t painelmaster-edge-backend:latest .; ` +
     `docker rm -f painelmaster-edge-backend >/dev/null 2>&1 || true; ` +
