@@ -106,7 +106,9 @@ app.get('/api/storage/*', async (req, res, next) => {
 // ===========================================
 
 // Segurança
+const enableHsts = String(process.env.ENABLE_HSTS || '').trim().toLowerCase() !== 'false';
 app.use(helmet({
+  hsts: enableHsts ? { maxAge: 15552000, includeSubDomains: true } : false,
   contentSecurityPolicy: isProduction ? {
     directives: {
       defaultSrc: ["'self'"],

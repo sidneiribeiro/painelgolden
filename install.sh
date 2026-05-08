@@ -282,7 +282,140 @@ NGINX
   if [[ $ENABLE_SSL -eq 1 && -n "$DOMAIN" && -n "$EMAIL" ]]; then
     log "Emitindo certificado Let's Encrypt..."
     apt-get install -y certbot python3-certbot-nginx
-    certbot --nginx --non-interactive --agree-tos -m "$EMAIL" -d "$DOMAIN" --redirect || warn "Certbot falhou — rode manualmente depois."
+    set_hsts() {
+      local v="$1"
+      if [[ -f .env ]]; then
+        if grep -q '^ENABLE_HSTS=' .env; then
+          sed -i "s/^ENABLE_HSTS=.*/ENABLE_HSTS=${v}/" .env
+        else
+          echo "ENABLE_HSTS=${v}" >> .env
+        fi
+      fi
+    }
+
+    if certbot --nginx --non-interactive --agree-tos -m "$EMAIL" -d "$DOMAIN" --redirect; then
+      set_hsts true
+      ok "SSL aplicado com Let's Encrypt"
+    else
+      warn "Certbot falhou (Let's Encrypt pode estar instável)."
+      set_hsts false
+    fi
+
+    if ! ss -lntp 2>/dev/null | grep -q ':443'; then
+      warn "Porta 443 não está ouvindo; criando SSL temporário (self-signed) para evitar conexão recusada."
+      mkdir -p /etc/ssl/painelmaster
+      if [[ ! -f /etc/ssl/painelmaster/selfsigned.key || ! -f /etc/ssl/painelmaster/selfsigned.crt ]]; then
+        openssl req -x509 -nodes -newkey rsa:2048 \
+          -keyout /etc/ssl/painelmaster/selfsigned.key \
+          -out /etc/ssl/painelmaster/selfsigned.crt \
+          -days 30 -subj "/CN=$DOMAIN" >/dev/null 2>&1 || true
+      fi
+      if ! grep -q 'listen 443' /etc/nginx/sites-available/painelmaster; then
+        SERVER_NAME="${DOMAIN:-_}"
+        cat >> /etc/nginx/sites-available/painelmaster <<NGINXSSL
+
+server {
+    listen 443 ssl http2;
+    server_name ${SERVER_NAME};
+    client_max_body_size 100M;
+
+    ssl_certificate /etc/ssl/painelmaster/selfsigned.crt;
+    ssl_certificate_key /etc/ssl/painelmaster/selfsigned.key;
+
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+    location ^~ /api {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_read_timeout 300s;
+    }
+    location = /get.php {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+    }
+    location = /player_api.php {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+    }
+    location = /panel_api.php {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+    }
+    location = /xmltv.php {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+    }
+    location ^~ /hls/ {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+    location ^~ /live/ {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+    location ^~ /movie/ {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+    location ^~ /series/ {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+    location ^~ /storage {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+    }
+    location ^~ /uploads {
+        proxy_pass http://127.0.0.1:3001;
+        include /etc/nginx/proxy_params;
+    }
+    location ^~ /socket.io {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection \$connection_upgrade;
+        include /etc/nginx/proxy_params;
+    }
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        include /etc/nginx/proxy_params;
+    }
+    location ~ /\. { deny all; }
+}
+NGINXSSL
+      fi
+      nginx -t && systemctl reload nginx
+    fi
   fi
 fi
 
@@ -306,6 +439,11 @@ if command -v ufw >/dev/null 2>&1; then
 fi
 
 PUB_URL="${DOMAIN:+https://$DOMAIN}"
+if [[ -n "$DOMAIN" && $ENABLE_SSL -eq 1 ]]; then
+  if ! ss -lntp 2>/dev/null | grep -q ':443'; then
+    PUB_URL="http://$DOMAIN"
+  fi
+fi
 PUB_URL="${PUB_URL:-http://$(curl -s ifconfig.me 2>/dev/null || echo 'SEU-IP')}"
 
 echo
