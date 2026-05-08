@@ -220,27 +220,6 @@ export function DashboardPage() {
     },
   });
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Spinner size="lg" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="p-6">
-        <Card className="p-8 text-center">
-          <p className="text-red-400">Erro ao carregar dados do dashboard</p>
-          <p className="text-sm text-zinc-500 mt-2">
-            Verifique se o servidor XUI está configurado corretamente.
-          </p>
-        </Card>
-      </div>
-    );
-  }
-
   const stats = data?.stats || {
     total_lines: 0,
     active_lines: 0,
@@ -319,6 +298,27 @@ export function DashboardPage() {
     }
     return ok;
   }, [installedServers, serverMetricsById]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-6">
+        <Card className="p-8 text-center">
+          <p className="text-red-400">Erro ao carregar dados do dashboard</p>
+          <p className="text-sm text-zinc-500 mt-2">
+            Verifique se o servidor XUI está configurado corretamente.
+          </p>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 lg:p-6 space-y-4 lg:space-y-6">
