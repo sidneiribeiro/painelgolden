@@ -109,7 +109,22 @@ function App() {
               <Route index element={<DashboardPage />} />
               <Route path="customers" element={<CustomersPage />} />
               <Route path="packages" element={<PackagesPage />} />
-              <Route path="bouquets" element={<BouquetsPage />} />
+              <Route
+                path="bouquets"
+                element={
+                  <RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN']} menuKey="bouquets">
+                    <Navigate to="/core?tab=bouquets" replace />
+                  </RoleProtectedRoute>
+                }
+              />
+              <Route
+                path="bouquets-xui"
+                element={
+                  <RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN']} menuKey="bouquets">
+                    <BouquetsPage />
+                  </RoleProtectedRoute>
+                }
+              />
               <Route path="users" element={<UsersPage />} />
               <Route path="settings">
                 <Route path="notifications" element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN']} menuKey="notifications"><NotificationsPage /></RoleProtectedRoute>} />

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
+import { useLocation } from 'react-router-dom';
 import { api } from '../../api/client';
 import { Badge, Button, Card, Input, Modal, Select, Spinner } from '../../components/ui';
 import { useAuthStore } from '../../store/authStore';
@@ -410,6 +411,13 @@ type CoreM3USchedule = {
 
 type TabKey = 'streams' | 'servers' | 'connections' | 'bouquets' | 'packages' | 'lines' | 'payments' | 'vod' | 'series' | 'schedules' | 'epg';
 
+const parseTabFromSearch = (search: string): TabKey => {
+  const raw = new URLSearchParams(search || '').get('tab');
+  const t = (raw || '').trim();
+  const allowed: TabKey[] = ['streams', 'servers', 'connections', 'bouquets', 'packages', 'lines', 'payments', 'vod', 'series', 'schedules', 'epg'];
+  return allowed.includes(t as TabKey) ? (t as TabKey) : 'lines';
+};
+
 const toDateInput = (iso: string) => {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
@@ -479,7 +487,8 @@ const sumNumbers = (values: Array<number | null | undefined>) => {
 export function CoreXtreamPage() {
   const queryClient = useQueryClient();
   const currentUser = useAuthStore((s) => s.user);
-  const [tab, setTab] = useState<TabKey>('lines');
+  const location = useLocation();
+  const [tab, setTab] = useState<TabKey>(() => parseTabFromSearch(location.search));
   const [importModalOpen, setImportModalOpen] = useState(false);
 
   const [streamModalOpen, setStreamModalOpen] = useState(false);
@@ -515,6 +524,7 @@ export function CoreXtreamPage() {
   const [xcLinksModalOpen, setXcLinksModalOpen] = useState(false);
   const [xcLinksLine, setXcLinksLine] = useState<CoreLine | null>(null);
   const [xcLinksPassword, setXcLinksPassword] = useState<string>('');
+  const linePasswordCacheRef = useRef<Map<string, string>>(new Map());
   const [editingEpg, setEditingEpg] = useState<CoreEpgSource | null>(null);
   const [epgAutoMapData, setEpgAutoMapData] = useState<CoreEpgAutoMapResponse | null>(null);
   const [renewLine, setRenewLine] = useState<CoreLine | null>(null);
@@ -549,6 +559,11 @@ export function CoreXtreamPage() {
   const [edgeJobStatus, setEdgeJobStatus] = useState<string | null>(null);
   const [edgeJobLogs, setEdgeJobLogs] = useState<string[]>([]);
   const [edgeJobError, setEdgeJobError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const next = parseTabFromSearch(location.search);
+    if (next !== tab) setTab(next);
+  }, [location.search, tab]);
 
   const { data: billingInfoData } = useQuery<{ data: { isBlocked: boolean; dueDate?: string | null; totalToPay?: number; activeCustomers?: number } }>({
     queryKey: ['billing-info'],
@@ -1397,13 +1412,13 @@ export function CoreXtreamPage() {
       return res.data;
     },
     onSuccess: () => {
-      toast.success('Bouquet criado');
+      toast.success('Categoria criada');
       queryClient.invalidateQueries({ queryKey: ['core-bouquets'] });
       queryClient.invalidateQueries({ queryKey: ['core-streams'] });
       setBouquetModalOpen(false);
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Erro ao criar bouquet');
+      toast.error(error.response?.data?.error || 'Erro ao criar categoria');
     },
   });
 
@@ -1419,13 +1434,13 @@ export function CoreXtreamPage() {
       return res.data;
     },
     onSuccess: () => {
-      toast.success('Bouquet atualizado');
+      toast.success('Categoria atualizada');
       queryClient.invalidateQueries({ queryKey: ['core-bouquets'] });
       queryClient.invalidateQueries({ queryKey: ['core-streams'] });
       setBouquetModalOpen(false);
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Erro ao atualizar bouquet');
+      toast.error(error.response?.data?.error || 'Erro ao atualizar categoria');
     },
   });
 
@@ -1434,13 +1449,13 @@ export function CoreXtreamPage() {
       await api.delete(`/core/bouquets/${id}`);
     },
     onSuccess: () => {
-      toast.success('Bouquet removido');
+      toast.success('Categoria removida');
       queryClient.invalidateQueries({ queryKey: ['core-bouquets'] });
       queryClient.invalidateQueries({ queryKey: ['core-packages'] });
       queryClient.invalidateQueries({ queryKey: ['core-streams'] });
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Erro ao remover bouquet');
+      toast.error(error.response?.data?.error || 'Erro ao remover categoria');
     },
   });
 
@@ -1518,10 +1533,21 @@ export function CoreXtreamPage() {
       const res = await api.post('/core/lines', payload);
       return res.data;
     },
-    onSuccess: () => {
+    onSuccess: (result: any) => {
       toast.success('Linha criada');
       queryClient.invalidateQueries({ queryKey: ['core-lines'] });
       setLineModalOpen(false);
+
+      const createdLine = (result?.data || null) as CoreLine | null;
+      const createdPassword = String(lineForm.password || '');
+      if (createdLine?.id && createdPassword) {
+        linePasswordCacheRef.current.set(createdLine.id, createdPassword);
+      }
+      if (createdLine && createdPassword) {
+        setXcLinksLine(createdLine);
+        setXcLinksPassword(createdPassword);
+        setXcLinksModalOpen(true);
+      }
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error || 'Erro ao criar linha');
@@ -1546,6 +1572,9 @@ export function CoreXtreamPage() {
       toast.success('Linha atualizada');
       queryClient.invalidateQueries({ queryKey: ['core-lines'] });
       setLineModalOpen(false);
+      if (editingLine?.id && lineForm.password) {
+        linePasswordCacheRef.current.set(editingLine.id, String(lineForm.password));
+      }
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error || 'Erro ao atualizar linha');
@@ -1559,6 +1588,9 @@ export function CoreXtreamPage() {
     },
     onSuccess: ({ line, data }) => {
       toast.success('Senha resetada');
+      if (line?.id && data?.data?.password) {
+        linePasswordCacheRef.current.set(line.id, String(data.data.password));
+      }
       setXcLinksLine(line);
       setXcLinksPassword(data.data.password);
       setXcLinksModalOpen(true);
@@ -2758,7 +2790,7 @@ export function CoreXtreamPage() {
           <div>
             <h2 className="text-xl font-semibold text-zinc-900 dark:text-white">Xtream Novo (Core)</h2>
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              Streams/VOD/Séries → Bouquets → Pacotes → Linhas (XC via /get.php, /player_api.php)
+              Streams/VOD/Séries → Categorias → Pacotes → Linhas (XC via /get.php, /player_api.php)
             </p>
           </div>
           <div className="flex flex-wrap gap-2 items-center">
@@ -2766,7 +2798,7 @@ export function CoreXtreamPage() {
             <button className={tabButtonClass('connections')} onClick={() => setTab('connections')}>Conexões</button>
             <button className={tabButtonClass('payments')} onClick={() => setTab('payments')}>Pagamentos</button>
             <button className={tabButtonClass('packages')} onClick={() => setTab('packages')}>Pacotes</button>
-            <button className={tabButtonClass('bouquets')} onClick={() => setTab('bouquets')}>Bouquets</button>
+            <button className={tabButtonClass('bouquets')} onClick={() => setTab('bouquets')}>Categorias</button>
             <button className={tabButtonClass('vod')} onClick={() => setTab('vod')}>VOD</button>
             <button className={tabButtonClass('series')} onClick={() => setTab('series')}>Séries</button>
             <button className={tabButtonClass('streams')} onClick={() => setTab('streams')}>Streams</button>
@@ -2980,7 +3012,7 @@ export function CoreXtreamPage() {
                           disabled={!publicXcDnsBaseUrl}
                           onClick={() => {
                             setXcLinksLine(l);
-                            setXcLinksPassword('');
+                            setXcLinksPassword(linePasswordCacheRef.current.get(l.id) || '');
                             setXcLinksModalOpen(true);
                           }}
                         >
@@ -3919,7 +3951,7 @@ export function CoreXtreamPage() {
                   <th className="py-2 pr-4">Conexões</th>
                   <th className="py-2 pr-4">Preço (centavos)</th>
                   <th className="py-2 pr-4">Status</th>
-                  <th className="py-2 pr-4">Bouquets</th>
+                  <th className="py-2 pr-4">Categorias</th>
                   <th className="py-2 pr-4"></th>
                 </tr>
               </thead>
@@ -3970,8 +4002,8 @@ export function CoreXtreamPage() {
       {tab === 'bouquets' ? (
         <Card>
           <div className="flex items-center justify-between gap-3">
-            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Bouquets</h3>
-            <Button onClick={openCreateBouquet} disabled={isBillingBlocked}>Novo Bouquet</Button>
+            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Categorias</h3>
+            <Button onClick={openCreateBouquet} disabled={isBillingBlocked}>Nova Categoria</Button>
           </div>
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-sm">
@@ -3999,7 +4031,7 @@ export function CoreXtreamPage() {
                           size="sm"
                           disabled={isBillingBlocked}
                           onClick={() => {
-                            if (!confirm('Remover este bouquet?')) return;
+                            if (!confirm('Remover esta categoria?')) return;
                             deleteBouquetMutation.mutate(b.id);
                           }}
                         >
@@ -4035,7 +4067,7 @@ export function CoreXtreamPage() {
                   <th className="py-2 pr-4">Nome</th>
                   <th className="py-2 pr-4">Status</th>
                   <th className="py-2 pr-4">URL</th>
-                  <th className="py-2 pr-4">Bouquets</th>
+                  <th className="py-2 pr-4">Categorias</th>
                   <th className="py-2 pr-4"></th>
                 </tr>
               </thead>
@@ -4094,7 +4126,7 @@ export function CoreXtreamPage() {
                   <th className="py-2 pr-4">Nome</th>
                   <th className="py-2 pr-4">Status</th>
                   <th className="py-2 pr-4">Episódios</th>
-                  <th className="py-2 pr-4">Bouquets</th>
+                  <th className="py-2 pr-4">Categorias</th>
                   <th className="py-2 pr-4"></th>
                 </tr>
               </thead>
@@ -4194,7 +4226,7 @@ export function CoreXtreamPage() {
                   <th className="py-2 pr-4">Status</th>
                   <th className="py-2 pr-4">Catchup</th>
                   <th className="py-2 pr-4">URL</th>
-                  <th className="py-2 pr-4">Bouquets</th>
+                  <th className="py-2 pr-4">Categorias</th>
                   <th className="py-2 pr-4"></th>
                 </tr>
               </thead>
@@ -5437,7 +5469,7 @@ export function CoreXtreamPage() {
           </Select>
 
           <div className="space-y-2">
-            <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Bouquets</div>
+            <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Categorias</div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {bouquets.map((b) => {
                 const checked = vodForm.bouquetIds.includes(b.id);
@@ -5461,7 +5493,7 @@ export function CoreXtreamPage() {
                 );
               })}
               {bouquets.length === 0 ? (
-                <div className="text-sm text-zinc-600 dark:text-zinc-400">Crie um bouquet primeiro</div>
+                <div className="text-sm text-zinc-600 dark:text-zinc-400">Crie uma categoria primeiro</div>
               ) : null}
             </div>
           </div>
@@ -5512,7 +5544,7 @@ export function CoreXtreamPage() {
           </Select>
 
           <div className="space-y-2">
-            <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Bouquets</div>
+            <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Categorias</div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {bouquets.map((b) => {
                 const checked = seriesForm.bouquetIds.includes(b.id);
@@ -5536,7 +5568,7 @@ export function CoreXtreamPage() {
                 );
               })}
               {bouquets.length === 0 ? (
-                <div className="text-sm text-zinc-600 dark:text-zinc-400">Crie um bouquet primeiro</div>
+                <div className="text-sm text-zinc-600 dark:text-zinc-400">Crie uma categoria primeiro</div>
               ) : null}
             </div>
           </div>
@@ -6184,7 +6216,7 @@ export function CoreXtreamPage() {
           </div>
 
           <div className="space-y-2">
-            <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Bouquets</div>
+            <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Categorias</div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {bouquets.map((b) => {
                 const checked = streamForm.bouquetIds.includes(b.id);
@@ -6208,7 +6240,7 @@ export function CoreXtreamPage() {
                 );
               })}
               {bouquets.length === 0 ? (
-                <div className="text-sm text-zinc-600 dark:text-zinc-400">Crie um bouquet primeiro</div>
+                <div className="text-sm text-zinc-600 dark:text-zinc-400">Crie uma categoria primeiro</div>
               ) : null}
             </div>
           </div>
@@ -6392,7 +6424,7 @@ export function CoreXtreamPage() {
       <Modal
         isOpen={bouquetModalOpen}
         onClose={() => setBouquetModalOpen(false)}
-        title={editingBouquet ? 'Editar Bouquet' : 'Novo Bouquet'}
+        title={editingBouquet ? 'Editar Categoria' : 'Nova Categoria'}
         size="lg"
       >
         <div className="space-y-4">
@@ -6501,7 +6533,7 @@ export function CoreXtreamPage() {
           </Select>
 
           <div className="space-y-2">
-            <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Bouquets</div>
+            <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Categorias</div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {bouquets.map((b) => {
                 const checked = packageForm.bouquetIds.includes(b.id);
@@ -6525,7 +6557,7 @@ export function CoreXtreamPage() {
                 );
               })}
               {bouquets.length === 0 ? (
-                <div className="text-sm text-zinc-600 dark:text-zinc-400">Crie um bouquet primeiro</div>
+                <div className="text-sm text-zinc-600 dark:text-zinc-400">Crie uma categoria primeiro</div>
               ) : null}
             </div>
           </div>

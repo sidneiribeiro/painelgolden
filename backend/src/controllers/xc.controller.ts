@@ -35,6 +35,14 @@ const ownerPublicBaseUrlCache = new Map<string, { publicBaseUrl: string; expires
 const isCoreEdgeOnly = process.env.CORE_EDGE_ONLY === 'true';
 const ownerEdgeServersCache = new Map<string, { expiresAt: number; servers: Array<{ serverId: string; host: string; httpPort: number; httpsPort: number }> }>();
 const streamEdgeServersCache = new Map<string, { expiresAt: number; servers: Array<{ serverId: string; host: string; httpPort: number; httpsPort: number }> }>();
+const upstreamHealthCache = new Map<
+  string,
+  { fails: number; nextTryAt: number; lastFailAt: number; lastOkAt: number; expiresAt: number }
+>();
+const upstreamFailThreshold = Math.max(1, parseInt(process.env.UPSTREAM_FAIL_THRESHOLD || '2', 10) || 2);
+const upstreamBaseCooldownMs = Math.max(1_000, parseInt(process.env.UPSTREAM_COOLDOWN_MS || '30000', 10) || 30_000);
+const upstreamTtlMs = Math.max(60_000, parseInt(process.env.UPSTREAM_STATE_TTL_MS || '900000', 10) || 900_000);
+const upstreamMaxEntries = Math.max(100, parseInt(process.env.UPSTREAM_STATE_MAX || '5000', 10) || 5000);
 
 function stripApiSuffix(url: string) {
   return (url || '').replace(/\/api\/?$/, '').replace(/\/$/, '');
@@ -218,6 +226,94 @@ function pickCandidateStartIndex(seed: string, count: number) {
   return n % count;
 }
 
+function getUrlOrigin(url: string) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return '';
+  }
+}
+
+function cleanupUpstreamHealthCache(now = Date.now()) {
+  if (upstreamHealthCache.size === 0) return;
+  for (const [k, v] of upstreamHealthCache.entries()) {
+    if ((v.expiresAt || 0) <= now) upstreamHealthCache.delete(k);
+  }
+  if (upstreamHealthCache.size <= upstreamMaxEntries) return;
+  const entries = Array.from(upstreamHealthCache.entries());
+  entries.sort((a, b) => (a[1].expiresAt || 0) - (b[1].expiresAt || 0));
+  const toDelete = Math.max(0, entries.length - upstreamMaxEntries);
+  for (let i = 0; i < toDelete; i++) upstreamHealthCache.delete(entries[i][0]);
+}
+
+function isUpstreamBlocked(origin: string, now = Date.now()) {
+  if (!origin) return false;
+  const state = upstreamHealthCache.get(origin);
+  if (!state) return false;
+  return state.nextTryAt > now;
+}
+
+function markUpstreamOk(origin: string) {
+  if (!origin) return;
+  const now = Date.now();
+  const current = upstreamHealthCache.get(origin);
+  upstreamHealthCache.set(origin, {
+    fails: 0,
+    nextTryAt: 0,
+    lastFailAt: current?.lastFailAt || 0,
+    lastOkAt: now,
+    expiresAt: now + upstreamTtlMs,
+  });
+}
+
+function markUpstreamFail(origin: string) {
+  if (!origin) return;
+  const now = Date.now();
+  const current = upstreamHealthCache.get(origin);
+  const fails = (current?.fails || 0) + 1;
+  const shouldOpen = fails >= upstreamFailThreshold;
+  const backoffFactor = Math.min(6, Math.max(1, fails - upstreamFailThreshold + 1));
+  const cooldown = shouldOpen ? upstreamBaseCooldownMs * backoffFactor : 0;
+  upstreamHealthCache.set(origin, {
+    fails,
+    nextTryAt: cooldown ? now + cooldown : current?.nextTryAt || 0,
+    lastFailAt: now,
+    lastOkAt: current?.lastOkAt || 0,
+    expiresAt: now + upstreamTtlMs,
+  });
+}
+
+async function selectUpstreamUrl(
+  req: Request,
+  sources: string[],
+  seed: string,
+  mapUrl: (src: string) => string
+) {
+  cleanupUpstreamHealthCache();
+  const nowMinute = Math.floor(Date.now() / 60_000);
+  const startIdx = pickCandidateStartIndex(`${seed}|${nowMinute}`, sources.length);
+  const ordered = sources.map((_, i) => sources[(startIdx + i) % sources.length]);
+
+  const attempt = async (skipBlocked: boolean) => {
+    for (const raw of ordered) {
+      const target = mapUrl(raw);
+      const origin = getUrlOrigin(target);
+      if (skipBlocked && origin && isUpstreamBlocked(origin)) continue;
+      const ok = await probeUpstreamUrl(req, target);
+      if (ok) {
+        if (origin) markUpstreamOk(origin);
+        return target;
+      }
+      if (origin) markUpstreamFail(origin);
+    }
+    return '';
+  };
+
+  const chosenFirst = await attempt(true);
+  if (chosenFirst) return chosenFirst;
+  return await attempt(false);
+}
+
 async function probeUpstreamUrl(req: Request, url: string) {
   const ac = new AbortController();
   const headers: Record<string, string> = {};
@@ -268,6 +364,7 @@ async function proxyUpstream(req: Request, res: Response, targetUrl: string, rel
   let bytesSent = 0n;
   let pingTimer: NodeJS.Timeout | null = null;
   let pingBusy = false;
+  const origin = getUrlOrigin(targetUrl);
 
   const cleanup = () => {
     try { ac.abort(); } catch {}
@@ -334,6 +431,7 @@ async function proxyUpstream(req: Request, res: Response, targetUrl: string, rel
   });
 
   if (upstream.status >= 400) {
+    if (origin) markUpstreamFail(origin);
     cleanup();
     throw new AppError(502, `Upstream retornou ${upstream.status}`);
   }
@@ -360,7 +458,13 @@ async function proxyUpstream(req: Request, res: Response, targetUrl: string, rel
     if (chunk?.length) bytesSent += BigInt(chunk.length);
   });
 
-  await pipeline(upstream.data, counter, res);
+  try {
+    await pipeline(upstream.data, counter, res);
+    if (origin) markUpstreamOk(origin);
+  } catch (e) {
+    if (origin) markUpstreamFail(origin);
+    throw e;
+  }
 }
 
 async function createPlaybackSession(params: {
@@ -1364,23 +1468,12 @@ export const redirectLiveStream = asyncHandler(async (req: Request, res: Respons
 
   const candidates = parseUpstreamCandidates(stream.streamUrl);
   const effective = candidates.length ? candidates : [stream.streamUrl.trim()];
-  const minute = Math.floor(Date.now() / 60_000);
-  const start = pickCandidateStartIndex(`${line.id}|${streamPublicId}|${minute}|${extLower}`, effective.length);
-
-  let chosenUrl = '';
-  for (let i = 0; i < effective.length; i++) {
-    const src = effective[(start + i) % effective.length];
+  const chosenUrl = await selectUpstreamUrl(req, effective, `${line.id}|live|${streamPublicId}|${extLower}`, (src) => {
     const m = src.match(/^(.*?)(\/live\/([^/]+)\/([^/]+)\/(\d+))(?:\.[a-z0-9]+)?/i);
-    const urlToUse = m
+    return m
       ? `${m[1]}/live/${encodeURIComponent(m[3])}/${encodeURIComponent(m[4])}/${encodeURIComponent(m[5])}.${encodeURIComponent(extLower)}`
       : src;
-
-    const ok = await probeUpstreamUrl(req, urlToUse);
-    if (ok) {
-      chosenUrl = urlToUse;
-      break;
-    }
-  }
+  });
 
   if (!chosenUrl) {
     try { release(); } catch {}
@@ -1466,16 +1559,59 @@ export const proxyHls = asyncHandler(async (req: Request, res: Response) => {
   }
 
   const wantText = /\.m3u8(\?|$)/i.test(targetUrl);
-  const upstream = await axios.request({
-    url: targetUrl,
-    method: 'GET',
-    responseType: wantText ? 'text' : 'stream',
-    headers,
-    timeout: 30000,
-    maxRedirects: 5,
-    validateStatus: () => true,
-  });
-  if (upstream.status >= 400) throw new AppError(502, `Upstream retornou ${upstream.status}`);
+  cleanupUpstreamHealthCache();
+  const urlObj = new URL(targetUrl);
+  const pathAndQuery = `${urlObj.pathname}${urlObj.search}`;
+  const originPool = Array.from(allowedOrigins);
+  const seed = `${session.id}|hls|${Math.floor(Date.now() / 60_000)}|${pathAndQuery}`;
+  const startIdx = pickCandidateStartIndex(seed, originPool.length);
+  const orderedOrigins = originPool.map((_, i) => originPool[(startIdx + i) % originPool.length]);
+  const uniqueOrigins: string[] = [];
+  const seenOrigins = new Set<string>();
+  const pushOrigin = (o: string) => {
+    if (!o || seenOrigins.has(o)) return;
+    seenOrigins.add(o);
+    uniqueOrigins.push(o);
+  };
+  pushOrigin(targetOrigin);
+  for (const o of orderedOrigins) pushOrigin(o);
+
+  const candidateUrls = uniqueOrigins.map((o) => `${o}${pathAndQuery}`);
+
+  const fetchAttempt = async (skipBlocked: boolean) => {
+    let lastErr: any = null;
+    for (const u of candidateUrls) {
+      const origin = getUrlOrigin(u);
+      if (skipBlocked && origin && isUpstreamBlocked(origin)) continue;
+      try {
+        const r = await axios.request({
+          url: u,
+          method: 'GET',
+          responseType: wantText ? 'text' : 'stream',
+          headers,
+          timeout: 30000,
+          maxRedirects: 5,
+          validateStatus: () => true,
+        });
+        if (r.status >= 400) {
+          if (origin) markUpstreamFail(origin);
+          lastErr = new AppError(502, `Upstream retornou ${r.status}`);
+          try {
+            if (!wantText && r?.data && typeof (r.data as any).destroy === 'function') (r.data as any).destroy();
+          } catch {}
+          continue;
+        }
+        if (origin) markUpstreamOk(origin);
+        return r;
+      } catch (e: any) {
+        if (origin) markUpstreamFail(origin);
+        lastErr = e;
+      }
+    }
+    throw lastErr || new AppError(502, 'Upstream indisponível');
+  };
+
+  const upstream = await fetchAttempt(true).catch(() => fetchAttempt(false));
 
   const now = new Date();
   if (!session.ipAddress && ipAddress) {
@@ -1590,29 +1726,17 @@ export const redirectTimeshiftStream = asyncHandler(async (req: Request, res: Re
 
   const candidates = parseUpstreamCandidates(stream.streamUrl);
   const effective = candidates.length ? candidates : [stream.streamUrl.trim()];
-  const minute = Math.floor(Date.now() / 60_000);
-  const startIdx = pickCandidateStartIndex(`${line.id}|${streamPublicId}|${minute}|timeshift`, effective.length);
-
-  let chosenUrl = '';
-  for (let i = 0; i < effective.length; i++) {
-    const raw = effective[(startIdx + i) % effective.length];
+  const chosenUrl = await selectUpstreamUrl(req, effective, `${line.id}|timeshift|${streamPublicId}|${duration}|${start}|${ext}`, (raw) => {
     const m = raw.match(/^(.*?)(\/live\/([^/]+)\/([^/]+)\/(\d+))(?:\.[a-z0-9]+)?/i);
-    if (!m) continue;
-
+    if (!m) return raw;
     const base = m[1];
     const upUser = m[3];
     const upPass = m[4];
     const upStreamId = m[5];
-    const targetUrl = `${base}/timeshift/${encodeURIComponent(upUser)}/${encodeURIComponent(upPass)}/${encodeURIComponent(
-      duration
-    )}/${encodeURIComponent(start)}/${encodeURIComponent(upStreamId)}.${encodeURIComponent(ext)}`;
-
-    const ok = await probeUpstreamUrl(req, targetUrl);
-    if (ok) {
-      chosenUrl = targetUrl;
-      break;
-    }
-  }
+    return `${base}/timeshift/${encodeURIComponent(upUser)}/${encodeURIComponent(upPass)}/${encodeURIComponent(duration)}/${encodeURIComponent(
+      start
+    )}/${encodeURIComponent(upStreamId)}.${encodeURIComponent(ext)}`;
+  });
 
   if (!chosenUrl) {
     try { release(); } catch {}
@@ -1676,23 +1800,12 @@ export const redirectMovieStream = asyncHandler(async (req: Request, res: Respon
 
   const candidates = parseUpstreamCandidates(vod.streamUrl);
   const effective = candidates.length ? candidates : [vod.streamUrl.trim()];
-  const minute = Math.floor(Date.now() / 60_000);
-  const startIdx = pickCandidateStartIndex(`${line.id}|vod|${vodPublicId}|${minute}|${ext}`, effective.length);
-
-  let chosenUrl = '';
-  for (let i = 0; i < effective.length; i++) {
-    const src = effective[(startIdx + i) % effective.length];
+  const chosenUrl = await selectUpstreamUrl(req, effective, `${line.id}|movie|${vodPublicId}|${ext}`, (src) => {
     const m = src.match(/^(.*?)(\/movie\/([^/]+)\/([^/]+)\/(\d+))(?:\.[a-z0-9]+)?/i);
-    const targetUrl = m
+    return m
       ? `${m[1]}/movie/${encodeURIComponent(m[3])}/${encodeURIComponent(m[4])}/${encodeURIComponent(m[5])}.${encodeURIComponent(ext)}`
       : src;
-
-    const ok = await probeUpstreamUrl(req, targetUrl);
-    if (ok) {
-      chosenUrl = targetUrl;
-      break;
-    }
-  }
+  });
 
   if (!chosenUrl) {
     try { release(); } catch {}
@@ -1756,23 +1869,12 @@ export const redirectSeriesEpisodeStream = asyncHandler(async (req: Request, res
 
   const candidates = parseUpstreamCandidates(ep.streamUrl);
   const effective = candidates.length ? candidates : [ep.streamUrl.trim()];
-  const minute = Math.floor(Date.now() / 60_000);
-  const startIdx = pickCandidateStartIndex(`${line.id}|series|${episodePublicId}|${minute}|${ext}`, effective.length);
-
-  let chosenUrl = '';
-  for (let i = 0; i < effective.length; i++) {
-    const src = effective[(startIdx + i) % effective.length];
+  const chosenUrl = await selectUpstreamUrl(req, effective, `${line.id}|series|${episodePublicId}|${ext}`, (src) => {
     const m = src.match(/^(.*?)(\/series\/([^/]+)\/([^/]+)\/(\d+))(?:\.[a-z0-9]+)?/i);
-    const targetUrl = m
+    return m
       ? `${m[1]}/series/${encodeURIComponent(m[3])}/${encodeURIComponent(m[4])}/${encodeURIComponent(m[5])}.${encodeURIComponent(ext)}`
       : src;
-
-    const ok = await probeUpstreamUrl(req, targetUrl);
-    if (ok) {
-      chosenUrl = targetUrl;
-      break;
-    }
-  }
+  });
 
   if (!chosenUrl) {
     try { release(); } catch {}

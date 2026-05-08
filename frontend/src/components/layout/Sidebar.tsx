@@ -69,7 +69,7 @@ export const ALL_MENU_KEYS = [
 // Labels
 export const MENU_KEY_LABELS: Record<string, string> = {
   dashboard: 'Dashboard',
-  bouquets: 'Bouquets',
+  bouquets: 'Categorias',
   users: 'Usuários',
   resellers: 'Revendedores',
   vod: 'VOD',
@@ -99,7 +99,7 @@ const serverItems: NavItem[] = [
 ];
 
 const bouquetItems: NavItem[] = [
-  { path: '/bouquets', label: 'Gerir Bouquets', icon: Icons.bouquets, key: 'bouquets', roles: ['SUPER_ADMIN', 'ADMIN'] },
+  { path: '/bouquets', label: 'Categorias', icon: Icons.bouquets, key: 'bouquets', roles: ['SUPER_ADMIN', 'ADMIN'] },
 ];
 
 const contentItems: NavItem[] = [
@@ -283,10 +283,10 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
           </div>
         )}
 
-        {/* Bouquets */}
+        {/* Categorias */}
         {filterByRole(bouquetItems).length > 0 && (
           <div className="mb-6">
-            <p className="text-[10px] uppercase text-zinc-400 dark:text-zinc-500 font-semibold tracking-wider px-4 mb-2">Bouquets</p>
+            <p className="text-[10px] uppercase text-zinc-400 dark:text-zinc-500 font-semibold tracking-wider px-4 mb-2">Categorias</p>
             {filterByRole(bouquetItems).map((item) => (
               <NavLink
                 key={item.path}
