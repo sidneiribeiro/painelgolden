@@ -1586,10 +1586,10 @@ export const startEdgeServerInstallNginxHealthJob = asyncHandler(async (req: Req
     `DB_HOST="${mainPublicHost}"; ` +
     `if [ -n "${vpnDbHost}" ] && nc -z -w 2 ${vpnDbHost} ${dbPort} >/dev/null 2>&1; then DB_HOST="${vpnDbHost}"; fi; ` +
     `EDGE_DB_URL="${edgeDatabaseUrlPublic}"; ` +
-    `EDGE_DB_URL="${EDGE_DB_URL//@${mainPublicHost}:/@${'$'}{DB_HOST}:}"; ` +
-    `echo "DB_HOST escolhido: ${'$'}{DB_HOST}"; ` +
-    `echo "Verificando acesso ao Postgres do MAIN em ${'$'}{DB_HOST}:${dbPort}"; ` +
-    `nc -z -w 3 ${'$'}{DB_HOST} ${dbPort} || (echo "ERRO: Balance nao consegue acessar o Postgres do MAIN (${'$'}{DB_HOST}:${dbPort}). Verifique VPN/firewall." && exit 20); ` +
+    `EDGE_DB_URL="$(echo "$EDGE_DB_URL" | sed "s/@${mainPublicHost}:/@$DB_HOST:/")"; ` +
+    `echo "DB_HOST escolhido: $DB_HOST"; ` +
+    `echo "Verificando acesso ao Postgres do MAIN em $DB_HOST:${dbPort}"; ` +
+    `nc -z -w 3 $DB_HOST ${dbPort} || (echo "ERRO: Balance nao consegue acessar o Postgres do MAIN ($DB_HOST:${dbPort}). Verifique VPN/firewall." && exit 20); ` +
     `mkdir -p /opt/painelmaster-edge; ` +
     `(test -d /opt/painelmaster-edge/.git && (cd /opt/painelmaster-edge && git pull)) || git clone https://github.com/sidneiribeiro/painelmaster.git /opt/painelmaster-edge; ` +
     `mkdir -p /opt/painelmaster-edge/backend; ` +
