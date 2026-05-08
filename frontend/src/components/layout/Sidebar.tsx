@@ -10,6 +10,7 @@ import {
   LogOut,
   Megaphone,
   Package,
+  Server,
   Settings,
   ShieldCheck,
   Sliders,
