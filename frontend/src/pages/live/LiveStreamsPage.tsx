@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { Card, Button, Input, Select, Modal } from '../../components/ui';
@@ -64,11 +64,19 @@ export function LiveStreamsPage() {
     queryKey: ['xui-servers'],
     queryFn: async () => {
       const res = await api.get('/servers');
-      return res.data;
+      return res.data?.data || res.data;
     },
   });
 
   const servers: XuiServer[] = Array.isArray(serversData) ? serversData : [];
+
+  useEffect(() => {
+    if (!serverId && servers.length > 0) {
+      setServerId(servers[0].id);
+      setPage(1);
+      setSelectedIds(new Set());
+    }
+  }, [serverId, servers]);
 
   const { data: categoriesData } = useQuery({
     queryKey: ['live-categories', serverId],

@@ -128,6 +128,8 @@ function App() {
               <Route path="import-sigma" element={<ImportSigmaPage />} />
               <Route path="vod">
                 <Route index element={<VODDashboardPage />} />
+                <Route path="movies" element={<VODItemsPage />} />
+                <Route path="series" element={<VODItemsPage />} />
                 <Route path="items" element={<VODItemsPage />} />
                 <Route path="import" element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN']}><VODImportPage /></RoleProtectedRoute>} />
                 <Route path="import-v2" element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN']}><VODImportV2Page /></RoleProtectedRoute>} />

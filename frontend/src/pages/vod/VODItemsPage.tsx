@@ -2,23 +2,32 @@
  * Lista de Itens VOD (Filmes e Séries)
  */
 
-import { useQuery } from '@tanstack/react-query';
-import { Card, Spinner, Button, Select } from '../../components/ui';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Card, Spinner, Button, Select, Modal } from '../../components/ui';
 import { api } from '../../api/client';
 import { Film, Tv, Search, AlertCircle } from 'lucide-react';
 import { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { Input } from '../../components/ui/Input';
 import toast from 'react-hot-toast';
 import { useDebounce } from '../../hooks/useDebounce';
 
 export function VODItemsPage() {
+  const queryClient = useQueryClient();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState(searchParams.get('search') || '');
   const debouncedSearch = useDebounce(search, 500); // Debounce de 500ms
   const [page, setPage] = useState(parseInt(searchParams.get('page') || '1', 10));
   const [vodType, setVodType] = useState<'movie' | 'series' | ''>(searchParams.get('vodType') as any || '');
   const [serverId, setServerId] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkForm, setBulkForm] = useState({
+    categoryId: '',
+    cover: '',
+  });
 
   // Buscar servidores XUI
   const { data: serversData } = useQuery({
@@ -46,6 +55,13 @@ export function VODItemsPage() {
     setPage(1);
   }, [debouncedSearch, vodType, setSearchParams]);
 
+  useEffect(() => {
+    if (vodType) return;
+    const p = location.pathname || '';
+    if (p.endsWith('/vod/movies')) setVodType('movie');
+    if (p.endsWith('/vod/series')) setVodType('series');
+  }, [location.pathname, vodType]);
+
   const { data, isLoading } = useQuery({
     queryKey: ['vod-items', serverId, page, debouncedSearch, vodType],
     queryFn: async () => {
@@ -69,6 +85,100 @@ export function VODItemsPage() {
 
   const items = Array.isArray(data?.data) ? data.data : [];
   const pagination = data?.pagination || { page: 1, perPage: 20, total: 0, totalPages: 0 };
+
+  const effectiveVodType = vodType || 'movie';
+  const bulkCategoryTypeParam = effectiveVodType === 'movie' ? 'vod' : 'series';
+
+  const { data: categoriesData } = useQuery({
+    queryKey: ['vod-categories', serverId, bulkCategoryTypeParam],
+    queryFn: async () => {
+      if (!serverId) return [];
+      const res = await api.get('/vod/categories', { params: { serverId, type: bulkCategoryTypeParam } });
+      return res.data.data || res.data || [];
+    },
+    enabled: !!serverId && (effectiveVodType === 'movie' || effectiveVodType === 'series'),
+  });
+
+  const categories: Array<{ id: number; category_name: string }> = Array.isArray(categoriesData) ? categoriesData : [];
+
+  const toggleSelectOne = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const selectAllPage = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const it of items) {
+        if (it?.id) next.add(Number(it.id));
+      }
+      return next;
+    });
+  };
+
+  const bulkUpdateMutation = useMutation({
+    mutationFn: async (payload: { serverId: string; vodType: 'movie' | 'series'; ids: number[]; categoryId?: number; cover?: string }) => {
+      const res = await api.put('/vod/items/bulk', payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['vod-items'] });
+      toast.success('Atualização em massa concluída');
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.error || 'Erro ao atualizar em massa'),
+  });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (payload: { serverId: string; vodType: 'movie' | 'series'; ids: number[] }) => {
+      const res = await api.delete('/vod/items/bulk', { data: payload });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['vod-items'] });
+      toast.success('Itens removidos');
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.error || 'Erro ao remover em massa'),
+  });
+
+  const openBulkEdit = () => {
+    setBulkForm({ categoryId: '', cover: '' });
+    setBulkOpen(true);
+  };
+
+  const applyBulkEdit = async () => {
+    const ids = Array.from(selectedIds);
+    if (!serverId || ids.length === 0) return;
+    const categoryIdNum = bulkForm.categoryId ? parseInt(bulkForm.categoryId, 10) : undefined;
+    const cover = bulkForm.cover.trim() ? bulkForm.cover.trim() : undefined;
+
+    await bulkUpdateMutation.mutateAsync({
+      serverId,
+      vodType: effectiveVodType as 'movie' | 'series',
+      ids,
+      categoryId: categoryIdNum,
+      cover,
+    });
+    setBulkOpen(false);
+    clearSelection();
+  };
+
+  const confirmBulkDelete = async () => {
+    const ids = Array.from(selectedIds);
+    if (!serverId || ids.length === 0) return;
+    await bulkDeleteMutation.mutateAsync({
+      serverId,
+      vodType: effectiveVodType as 'movie' | 'series',
+      ids,
+    });
+    setBulkDeleteOpen(false);
+    clearSelection();
+  };
 
   const handleSearch = () => {
     // A busca agora é automática via debounce, mas mantemos para compatibilidade com Enter
@@ -114,6 +224,27 @@ export function VODItemsPage() {
         </div>
       </div>
 
+      {selectedIds.size > 0 ? (
+        <Card className="p-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div className="text-sm text-gray-600 dark:text-gray-400">
+              Selecionados: <span className="font-semibold text-gray-900 dark:text-white">{selectedIds.size}</span>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="secondary" onClick={openBulkEdit} disabled={!serverId}>
+                Editar em massa
+              </Button>
+              <Button variant="danger" onClick={() => setBulkDeleteOpen(true)} disabled={!serverId || bulkDeleteMutation.isPending}>
+                Apagar em massa
+              </Button>
+              <Button variant="secondary" onClick={clearSelection}>
+                Limpar seleção
+              </Button>
+            </div>
+          </div>
+        </Card>
+      ) : null}
+
       {/* Filtros */}
       <Card className="p-4">
         <div className="flex flex-col gap-4">
@@ -127,6 +258,7 @@ export function VODItemsPage() {
                 onChange={(e) => {
                   setServerId(e.target.value);
                   setPage(1);
+                  clearSelection();
                 }}
               >
                 <option value="">Selecione um servidor</option>
@@ -154,6 +286,7 @@ export function VODItemsPage() {
               onClick={() => {
                 setVodType('');
                 setPage(1);
+                clearSelection();
                 handleSearch();
               }}
             >
@@ -164,6 +297,7 @@ export function VODItemsPage() {
               onClick={() => {
                 setVodType('movie');
                 setPage(1);
+                clearSelection();
                 handleSearch();
               }}
             >
@@ -175,6 +309,7 @@ export function VODItemsPage() {
               onClick={() => {
                 setVodType('series');
                 setPage(1);
+                clearSelection();
                 handleSearch();
               }}
             >
@@ -184,6 +319,9 @@ export function VODItemsPage() {
             <Button onClick={handleSearch}>
               <Search className="w-4 h-4 mr-2" />
               Buscar
+            </Button>
+            <Button variant="secondary" onClick={selectAllPage} disabled={!serverId || items.length === 0}>
+              Selecionar página
             </Button>
           </div>
         </div>
@@ -232,6 +370,13 @@ export function VODItemsPage() {
             {items.map((item: any) => (
               <Card key={item.id} className="p-4">
                 <div className="flex items-start gap-3">
+                  <div className="pt-1">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(Number(item.id))}
+                      onChange={() => toggleSelectOne(Number(item.id))}
+                    />
+                  </div>
                   <div className={`w-12 h-12 rounded-lg flex items-center justify-center ${
                     item.vodType === 'movie' 
                       ? 'bg-blue-100 dark:bg-blue-500/20' 
@@ -290,6 +435,55 @@ export function VODItemsPage() {
           )}
         </>
       )}
+
+      <Modal isOpen={bulkOpen} onClose={() => setBulkOpen(false)} title="Editar em Massa">
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-2">Categoria</label>
+            <Select
+              value={bulkForm.categoryId}
+              onChange={(e) => setBulkForm({ ...bulkForm, categoryId: e.target.value })}
+              disabled={!serverId}
+            >
+              <option value="">Não alterar</option>
+              <option value="0">Sem categoria</option>
+              {categories.map((c) => (
+                <option key={c.id} value={String(c.id)}>{c.category_name}</option>
+              ))}
+            </Select>
+          </div>
+          <Input
+            label={effectiveVodType === 'series' ? 'Cover URL' : 'Poster URL'}
+            placeholder="http://..."
+            value={bulkForm.cover}
+            onChange={(e) => setBulkForm({ ...bulkForm, cover: e.target.value })}
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" onClick={() => setBulkOpen(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={applyBulkEdit} disabled={bulkUpdateMutation.isPending}>
+              Aplicar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={bulkDeleteOpen} onClose={() => setBulkDeleteOpen(false)} title="Apagar em Massa">
+        <div className="space-y-4">
+          <div className="text-sm text-gray-600 dark:text-gray-400">
+            Remover <span className="font-semibold text-gray-900 dark:text-white">{selectedIds.size}</span> item(ns).
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" onClick={() => setBulkDeleteOpen(false)}>
+              Cancelar
+            </Button>
+            <Button variant="danger" onClick={confirmBulkDelete} disabled={bulkDeleteMutation.isPending}>
+              Apagar
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

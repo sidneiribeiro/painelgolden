@@ -90,7 +90,7 @@ export const MENU_KEY_LABELS: Record<string, string> = {
 
 // Default permissions
 const DEFAULT_RESELLER_KEYS = ['dashboard', 'customers', 'users', 'panel_settings', 'notifications', 'core'];
-const DEFAULT_MASTER_RESELLER_KEYS = ['dashboard', 'customers', 'users', 'panel_settings', 'notifications', 'core', 'live'];
+const DEFAULT_MASTER_RESELLER_KEYS = ['dashboard', 'customers', 'users', 'panel_settings', 'notifications', 'core', 'live', 'vod'];
 
 // Navigation items
 const navItems: NavItem[] = [
@@ -127,6 +127,11 @@ const marketingItems: NavItem[] = [
 const liveItems: NavItem[] = [
   { path: '/live/streams', label: 'Canais (Live)', icon: Icons.live, key: 'live', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
   { path: '/live/import', label: 'Importar (Live)', icon: Icons.import, key: 'live', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
+];
+
+const vodItems: NavItem[] = [
+  { path: '/vod/movies', label: 'Filmes', icon: Icons.vod, key: 'vod', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
+  { path: '/vod/series', label: 'Séries', icon: Icons.vod, key: 'vod', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
 ];
 
 export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
@@ -290,6 +295,24 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
           <div className="mt-6">
             <p className="text-[10px] uppercase text-zinc-400 dark:text-zinc-500 font-semibold tracking-wider px-4 mb-2">LIVE TV</p>
             {filterByRole(liveItems).map((item) => (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                className={navLinkClass}
+                onClick={handleNavClick}
+              >
+                <span className="text-zinc-500 dark:text-zinc-400">{item.icon}</span>
+                <span className="text-sm">{item.label}</span>
+              </NavLink>
+            ))}
+          </div>
+        )}
+
+        {/* Filmes / Séries */}
+        {filterByRole(vodItems).length > 0 && (
+          <div className="mt-6">
+            <p className="text-[10px] uppercase text-zinc-400 dark:text-zinc-500 font-semibold tracking-wider px-4 mb-2">Filmes e Séries</p>
+            {filterByRole(vodItems).map((item) => (
               <NavLink
                 key={item.path}
                 to={item.path}
