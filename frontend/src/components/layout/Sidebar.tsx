@@ -99,17 +99,19 @@ const navItems: NavItem[] = [
 
 const serverItems: NavItem[] = [
   { path: '/core?tab=overview', label: 'Dashboard', icon: Icons.dashboard, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
-  { path: '/core?tab=streams', label: 'Streams', icon: Icons.live, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
-  { path: '/core?tab=vod', label: 'Filmes', icon: Icons.vod, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
-  { path: '/core?tab=series', label: 'Séries', icon: Icons.vod, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=streams', label: 'Streams (Core)', icon: Icons.live, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=vod', label: 'Filmes (Core)', icon: Icons.vod, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=series', label: 'Séries (Core)', icon: Icons.vod, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
   { path: '/core?tab=bouquets', label: 'Categorias', icon: Icons.bouquets, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
   { path: '/core?tab=packages', label: 'Pacotes', icon: Icons.packages, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
   { path: '/core?tab=lines', label: 'Clientes', icon: Icons.customers, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
-  { path: '/core?tab=connections', label: 'Conexões', icon: Icons.financial, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=connections', label: 'Conexões (XC)', icon: Icons.financial, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
   { path: '/core?tab=monitor', label: 'Monitoramento', icon: Icons.notifications, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
   { path: '/core?tab=servers', label: 'Servidores', icon: Icons.core, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
   { path: '/core?tab=schedules', label: 'Agendas', icon: Icons.settings, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
   { path: '/core?tab=epg', label: 'EPG', icon: Icons.live, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/livetv/streams', label: 'Canais (Live)', icon: Icons.live, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
+  { path: '/livetv/import', label: 'Importar (Live)', icon: Icons.import, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
   { path: '/core?tab=overview&action=import-m3u', label: 'Importar M3U', icon: Icons.import, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
 ];
 
@@ -131,16 +133,6 @@ const marketingItems: NavItem[] = [
   { path: '/marketing/banners', label: 'Banners e Vídeos', icon: Icons.marketing, key: 'marketing', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/marketing/jogos-do-dia', label: 'Jogos do Dia', icon: Icons.premium, key: 'marketing', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/marketing/video-promocional', label: 'Vídeo Promocional', icon: Icons.vod, key: 'marketing', roles: ['SUPER_ADMIN', 'ADMIN'] },
-];
-
-const liveItems: NavItem[] = [
-  { path: '/livetv/streams', label: 'Canais (Live)', icon: Icons.live, key: 'live', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
-  { path: '/livetv/import', label: 'Importar (Live)', icon: Icons.import, key: 'live', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
-];
-
-const vodItems: NavItem[] = [
-  { path: '/vod/movies', label: 'Filmes', icon: Icons.vod, key: 'vod', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
-  { path: '/vod/series', label: 'Séries', icon: Icons.vod, key: 'vod', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
 ];
 
 export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
@@ -299,41 +291,6 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
           </div>
         )}
 
-        {/* LIVE TV */}
-        {filterByRole(liveItems).length > 0 && (
-          <div className="mt-6">
-            <p className="text-[10px] uppercase text-zinc-400 dark:text-zinc-500 font-semibold tracking-wider px-4 mb-2">LIVE TV</p>
-            {filterByRole(liveItems).map((item) => (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                className={navLinkClass}
-                onClick={handleNavClick}
-              >
-                <span className="text-zinc-500 dark:text-zinc-400">{item.icon}</span>
-                <span className="text-sm">{item.label}</span>
-              </NavLink>
-            ))}
-          </div>
-        )}
-
-        {/* Filmes / Séries */}
-        {filterByRole(vodItems).length > 0 && (
-          <div className="mt-6">
-            <p className="text-[10px] uppercase text-zinc-400 dark:text-zinc-500 font-semibold tracking-wider px-4 mb-2">Filmes e Séries</p>
-            {filterByRole(vodItems).map((item) => (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                className={navLinkClass}
-                onClick={handleNavClick}
-              >
-                <span className="text-zinc-500 dark:text-zinc-400">{item.icon}</span>
-                <span className="text-sm">{item.label}</span>
-              </NavLink>
-            ))}
-          </div>
-        )}
       </nav>
 
       {/* User Info & Logout */}
