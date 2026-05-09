@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { Badge, Button, Card, Input, Modal, Select, Spinner } from '../../components/ui';
 import { useAuthStore } from '../../store/authStore';
+import { getImageUrl } from '../../utils/imageUrl';
 
 function normalizeM3UUrlInput(raw: string) {
   const s = String(raw || '').trim();
@@ -662,6 +663,7 @@ export function CoreXtreamPage() {
     bouquetIds: [] as string[],
     serverIds: [] as string[],
   });
+  const [streamLogoFile, setStreamLogoFile] = useState<File | null>(null);
 
   const [serverForm, setServerForm] = useState({
     name: '',
@@ -1419,6 +1421,28 @@ export function CoreXtreamPage() {
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error || 'Erro ao atualizar stream');
+    },
+  });
+
+  const uploadStreamLogoMutation = useMutation({
+    mutationFn: async (payload: { streamId: string; file: File }) => {
+      const form = new FormData();
+      form.append('logo', payload.file);
+      const res = await api.post(`/core/streams/${payload.streamId}/logo`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return res.data?.data as CoreStream;
+    },
+    onSuccess: (updated) => {
+      toast.success('Logo atualizado');
+      queryClient.invalidateQueries({ queryKey: ['core-streams'] });
+      if (editingStream?.id && updated?.id === editingStream.id) {
+        setStreamForm((p) => ({ ...p, logoUrl: updated.logoUrl || '' }));
+      }
+      setStreamLogoFile(null);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao enviar logo');
     },
   });
 
@@ -2594,6 +2618,7 @@ export function CoreXtreamPage() {
   const openCreateStream = () => {
     setEditingStream(null);
     setStreamForm({ name: '', streamUrl: '', logoUrl: '', epgChannelId: '', tvArchive: false, tvArchiveDuration: 0, isActive: true, bouquetIds: [], serverIds: [] });
+    setStreamLogoFile(null);
     setStreamModalOpen(true);
   };
 
@@ -2610,6 +2635,7 @@ export function CoreXtreamPage() {
       bouquetIds: s.bouquetIds || [],
       serverIds: (s as any).serverIds || [],
     });
+    setStreamLogoFile(null);
     setStreamModalOpen(true);
   };
 
@@ -3003,7 +3029,8 @@ export function CoreXtreamPage() {
     terminatePlaybackSessionMutation.isPending ||
     startServerSshTestMutation.isPending ||
     startServerInstallMutation.isPending ||
-    cancelEdgeJobMutation.isPending;
+    cancelEdgeJobMutation.isPending ||
+    uploadStreamLogoMutation.isPending;
 
   return (
     <div className="space-y-6">
@@ -4620,6 +4647,7 @@ export function CoreXtreamPage() {
                       }}
                     />
                   </th>
+                  <th className="py-2 pr-4">Logo</th>
                   <th className="py-2 pr-4">Nome</th>
                   <th className="py-2 pr-4">Status</th>
                   <th className="py-2 pr-4">Catchup</th>
@@ -4643,6 +4671,20 @@ export function CoreXtreamPage() {
                           });
                         }}
                       />
+                    </td>
+                    <td className="py-3 pr-4">
+                      {s.logoUrl ? (
+                        <img
+                          src={getImageUrl(s.logoUrl) || ''}
+                          alt=""
+                          className="w-7 h-7 rounded object-cover bg-white"
+                          onError={(e) => {
+                            (e.currentTarget as any).style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        <div className="w-7 h-7 rounded bg-zinc-100 dark:bg-zinc-800" />
+                      )}
                     </td>
                     <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-white">{s.name}</td>
                     <td className="py-3 pr-4">
@@ -4695,7 +4737,7 @@ export function CoreXtreamPage() {
                 ))}
                 {streams.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
+                    <td colSpan={8} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
                       Nenhuma stream criada ainda
                     </td>
                   </tr>
@@ -6495,7 +6537,10 @@ export function CoreXtreamPage() {
 
       <Modal
         isOpen={streamModalOpen}
-        onClose={() => setStreamModalOpen(false)}
+        onClose={() => {
+          setStreamModalOpen(false);
+          setStreamLogoFile(null);
+        }}
         title={editingStream ? 'Editar Stream' : 'Nova Stream'}
         size="lg"
       >
@@ -6539,6 +6584,53 @@ export function CoreXtreamPage() {
             value={streamForm.logoUrl}
             onChange={(e) => setStreamForm((p) => ({ ...p, logoUrl: e.target.value }))}
           />
+          {streamForm.logoUrl ? (
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                {getImageUrl(streamForm.logoUrl) ? (
+                  <img
+                    src={getImageUrl(streamForm.logoUrl) || ''}
+                    alt=""
+                    className="w-10 h-10 rounded object-cover bg-white"
+                    onError={(e) => {
+                      (e.currentTarget as any).style.display = 'none';
+                    }}
+                  />
+                ) : null}
+                <div className="text-xs text-zinc-600 dark:text-zinc-400 truncate max-w-[360px]">{streamForm.logoUrl}</div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => window.open(getImageUrl(streamForm.logoUrl) || streamForm.logoUrl, '_blank', 'noopener,noreferrer')}
+              >
+                Abrir
+              </Button>
+            </div>
+          ) : null}
+          {editingStream ? (
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Enviar logo do canal</div>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setStreamLogoFile(e.target.files?.[0] || null)}
+              />
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={isBillingBlocked || !streamLogoFile || uploadStreamLogoMutation.isPending}
+                  onClick={() => {
+                    if (!editingStream || !streamLogoFile) return;
+                    uploadStreamLogoMutation.mutate({ streamId: editingStream.id, file: streamLogoFile });
+                  }}
+                >
+                  Enviar logo
+                </Button>
+              </div>
+            </div>
+          ) : null}
           <Select
             label="Canal EPG (opcional)"
             value={streamForm.epgChannelId || ''}

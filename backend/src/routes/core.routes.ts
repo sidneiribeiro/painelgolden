@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authMiddleware, requireRole } from '../middleware/auth.middleware.js';
 import { billingMiddleware, requireBillingValid } from '../middleware/billingMiddleware.js';
+import { upload } from '../middleware/upload.js';
 import {
   listStreams,
   probeStreamUpstreams,
@@ -17,6 +18,7 @@ import {
   cancelEdgeServerJob,
   createStream,
   updateStream,
+  uploadStreamLogo,
   removeStream,
   listBouquets,
   createBouquet,
@@ -86,6 +88,7 @@ router.get('/streams/:id/probe', requireBillingValid, probeStreamUpstreams);
 router.post('/streams/bulk/apply-servers', requireBillingValid, bulkApplyEdgeServersToStreams);
 router.post('/streams', requireBillingValid, createStream);
 router.put('/streams/:id', requireBillingValid, updateStream);
+router.post('/streams/:id/logo', requireBillingValid, upload.single('logo'), uploadStreamLogo);
 router.delete('/streams/:id', requireBillingValid, removeStream);
 
 router.get('/servers', listEdgeServers);

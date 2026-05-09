@@ -7,6 +7,8 @@ import zlib from 'node:zlib';
 import axios from 'axios';
 import ssh2Pkg from 'ssh2';
 import https from 'node:https';
+import path from 'path';
+import fs from 'fs/promises';
 import { prisma } from '../config/database.js';
 import env from '../config/env.js';
 import { asyncHandler, AppError } from '../middleware/error.middleware.js';
@@ -2265,6 +2267,62 @@ export const updateStream = asyncHandler(async (req: Request, res: Response) => 
   }
 
   res.json({ data: { ...updated, serverIds: data.serverIds ?? undefined } });
+});
+
+export const uploadStreamLogo = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+  const file = (req as any).file;
+
+  if (!file) {
+    throw new AppError(400, 'Nenhum arquivo enviado');
+  }
+
+  const stream = await prisma.coreStream.findFirst({ where: { id, ...coreOwnerWhere(currentUser) } });
+  if (!stream) {
+    await fs.unlink(file.path).catch(() => {});
+    throw new AppError(404, 'Stream não encontrada');
+  }
+
+  const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+  if (!allowedMimes.includes(file.mimetype)) {
+    await fs.unlink(file.path).catch(() => {});
+    throw new AppError(400, 'Formato de arquivo não permitido. Use JPG, PNG, GIF ou WebP');
+  }
+
+  const maxSize = 5 * 1024 * 1024;
+  if (file.size > maxSize) {
+    await fs.unlink(file.path).catch(() => {});
+    throw new AppError(400, 'Arquivo muito grande. Tamanho máximo: 5MB');
+  }
+
+  const uploadsDir = '/app/storage/logos';
+  await fs.mkdir(uploadsDir, { recursive: true });
+
+  const ext = path.extname(file.originalname) || '.png';
+  const safeExt = ext.length <= 10 ? ext : '.png';
+  const fileName = `core-stream-${currentUser.userId}-${id}-${Date.now()}${safeExt}`;
+  const filePath = path.join(uploadsDir, fileName);
+
+  await fs.copyFile(file.path, filePath);
+  await fs.unlink(file.path).catch(() => {});
+
+  const logoUrl = `/uploads/logos/${fileName}`;
+
+  const existingLogo = String(stream.logoUrl || '');
+  if (existingLogo.startsWith('/uploads/logos/')) {
+    const oldName = existingLogo.slice('/uploads/logos/'.length);
+    if (oldName.startsWith(`core-stream-${currentUser.userId}-${id}-`)) {
+      await fs.unlink(path.join('/app/storage/logos', oldName)).catch(() => {});
+    }
+  }
+
+  const updated = await prisma.coreStream.update({
+    where: { id },
+    data: { logoUrl },
+  });
+
+  res.json({ data: updated });
 });
 
 export const removeStream = asyncHandler(async (req: Request, res: Response) => {
