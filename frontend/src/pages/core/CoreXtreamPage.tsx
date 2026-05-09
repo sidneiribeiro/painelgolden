@@ -6,6 +6,22 @@ import { api } from '../../api/client';
 import { Badge, Button, Card, Input, Modal, Select, Spinner } from '../../components/ui';
 import { useAuthStore } from '../../store/authStore';
 
+function normalizeM3UUrlInput(raw: string) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  const hashIndex = s.indexOf('#');
+  const beforeHash = hashIndex >= 0 ? s.slice(0, hashIndex) : s;
+  const hashPart = hashIndex >= 0 ? s.slice(hashIndex) : '';
+  const firstQ = beforeHash.indexOf('?');
+  const safeBeforeHash = (() => {
+    if (firstQ < 0) return beforeHash.replace(/\s+/g, '%20');
+    const head = beforeHash.slice(0, firstQ + 1);
+    const query = beforeHash.slice(firstQ + 1).replace(/\?/g, '%3F').replace(/\s+/g, '%20');
+    return `${head}${query}`;
+  })();
+  return `${safeBeforeHash}${hashPart}`;
+}
+
 type CoreStream = {
   id: string;
   name: string;
@@ -1803,7 +1819,7 @@ export function CoreXtreamPage() {
   const importM3UMutation = useMutation({
     mutationFn: async () => {
       const payload = {
-        url: importForm.url,
+        url: normalizeM3UUrlInput(importForm.url),
         mode: importForm.mode,
         type: importForm.type,
         createPackage: importForm.createPackage,

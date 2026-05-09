@@ -60,6 +60,22 @@ function stripApiSuffix(url: string): string {
   return (url || '').replace(/\/api\/?$/, '').replace(/\/$/, '');
 }
 
+function normalizeM3UUrlInput(raw: string) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  const hashIndex = s.indexOf('#');
+  const beforeHash = hashIndex >= 0 ? s.slice(0, hashIndex) : s;
+  const hashPart = hashIndex >= 0 ? s.slice(hashIndex) : '';
+  const firstQ = beforeHash.indexOf('?');
+  const safeBeforeHash = (() => {
+    if (firstQ < 0) return beforeHash.replace(/\s+/g, '%20');
+    const head = beforeHash.slice(0, firstQ + 1);
+    const query = beforeHash.slice(firstQ + 1).replace(/\?/g, '%3F').replace(/\s+/g, '%20');
+    return `${head}${query}`;
+  })();
+  return `${safeBeforeHash}${hashPart}`;
+}
+
 function coreOwnerWhere(user: { userId: string; role: string }) {
   if (user.role === 'SUPER_ADMIN' || user.role === 'ADMIN') return {};
   return { ownerId: user.userId };
@@ -205,7 +221,21 @@ const seriesEpisodeSchema = z.object({
 });
 
 const importM3USchema = z.object({
-  url: z.string().url(),
+  url: z
+    .string()
+    .min(1)
+    .transform(normalizeM3UUrlInput)
+    .refine(
+      (v) => {
+        try {
+          new URL(v);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      { message: 'URL do M3U inválida. Se a senha tiver "?" use %3F (ex: password=abc%3F123).' },
+    ),
   mode: z.enum(['append', 'replace', 'update']).optional(),
   type: z.enum(['all', 'live', 'movie', 'series', 'vod']).optional(),
   createPackage: z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true').optional(),
@@ -220,7 +250,21 @@ const importM3USchema = z.object({
 
 const m3uScheduleSchema = z.object({
   name: z.string().min(1),
-  m3uUrl: z.string().url(),
+  m3uUrl: z
+    .string()
+    .min(1)
+    .transform(normalizeM3UUrlInput)
+    .refine(
+      (v) => {
+        try {
+          new URL(v);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      { message: 'URL do M3U inválida. Se a senha tiver "?" use %3F (ex: password=abc%3F123).' },
+    ),
   cronExpression: z.string().min(1),
   type: z.enum(['all', 'live', 'movie', 'series', 'vod']).optional(),
   mode: z.enum(['append', 'replace', 'update']).optional(),
