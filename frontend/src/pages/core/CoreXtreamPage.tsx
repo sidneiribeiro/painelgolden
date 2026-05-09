@@ -83,7 +83,7 @@ type CoreBouquet = {
   name: string;
   isActive: boolean;
   createdAt: string;
-  _count?: { streams: number };
+  _count?: { streams?: number; vodItems?: number; series?: number };
 };
 
 type CorePackage = {
@@ -1208,6 +1208,9 @@ export function CoreXtreamPage() {
   };
   const servers = serversData?.data || [];
   const bouquets = bouquetsData?.data || [];
+  const bouquetsForStreams = useMemo(() => bouquets.filter((b) => (b._count?.streams || 0) > 0), [bouquets]);
+  const bouquetsForVod = useMemo(() => bouquets.filter((b) => (b._count?.vodItems || 0) > 0), [bouquets]);
+  const bouquetsForSeries = useMemo(() => bouquets.filter((b) => (b._count?.series || 0) > 0), [bouquets]);
   const packages = packagesData?.data || [];
   const lines = linesData?.data || [];
   const vodItems = vodData?.data || [];
@@ -4737,8 +4740,12 @@ export function CoreXtreamPage() {
               <Button
                 variant="outline"
                 size="sm"
-                disabled={isBillingBlocked || selectedVodIds.length === 0}
+                disabled={isBillingBlocked}
                 onClick={() => {
+                  if (!selectedVodIds.length) {
+                    toast.error('Selecione pelo menos 1 filme');
+                    return;
+                  }
                   setBulkVodStatus('keep');
                   setBulkEditVodModalOpen(true);
                 }}
@@ -4748,8 +4755,14 @@ export function CoreXtreamPage() {
               <Button
                 variant="danger"
                 size="sm"
-                disabled={isBillingBlocked || selectedVodIds.length === 0}
-                onClick={() => setBulkDeleteVodModalOpen(true)}
+                disabled={isBillingBlocked}
+                onClick={() => {
+                  if (!selectedVodIds.length) {
+                    toast.error('Selecione pelo menos 1 filme');
+                    return;
+                  }
+                  setBulkDeleteVodModalOpen(true);
+                }}
               >
                 Apagar em massa
               </Button>
@@ -4772,7 +4785,7 @@ export function CoreXtreamPage() {
                   }}
                 >
                   <option value="">Todas as Categorias</option>
-                  {bouquets.map((b) => (
+                  {bouquetsForVod.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
                     </option>
@@ -4828,7 +4841,7 @@ export function CoreXtreamPage() {
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-zinc-600 dark:text-zinc-400">
-                  <th className="py-2 pr-4">
+                  <th className="py-2 pr-4 sticky left-0 bg-white/90 dark:bg-zinc-950/90 backdrop-blur z-10">
                     <input
                       type="checkbox"
                       checked={vodItems.length > 0 && vodItems.every((v) => selectedVodIds.includes(v.id))}
@@ -4850,7 +4863,7 @@ export function CoreXtreamPage() {
               <tbody>
                 {vodItems.map((v) => (
                   <tr key={v.id} className="border-t border-zinc-200/70 dark:border-zinc-800/70">
-                    <td className="py-3 pr-4">
+                    <td className="py-3 pr-4 sticky left-0 bg-white/90 dark:bg-zinc-950/90 backdrop-blur z-10">
                       <input
                         type="checkbox"
                         checked={selectedVodIds.includes(v.id)}
@@ -4928,8 +4941,12 @@ export function CoreXtreamPage() {
               <Button
                 variant="outline"
                 size="sm"
-                disabled={isBillingBlocked || selectedSeriesIds.length === 0}
+                disabled={isBillingBlocked}
                 onClick={() => {
+                  if (!selectedSeriesIds.length) {
+                    toast.error('Selecione pelo menos 1 série');
+                    return;
+                  }
                   setBulkSeriesStatus('keep');
                   setBulkEditSeriesModalOpen(true);
                 }}
@@ -4939,8 +4956,14 @@ export function CoreXtreamPage() {
               <Button
                 variant="danger"
                 size="sm"
-                disabled={isBillingBlocked || selectedSeriesIds.length === 0}
-                onClick={() => setBulkDeleteSeriesModalOpen(true)}
+                disabled={isBillingBlocked}
+                onClick={() => {
+                  if (!selectedSeriesIds.length) {
+                    toast.error('Selecione pelo menos 1 série');
+                    return;
+                  }
+                  setBulkDeleteSeriesModalOpen(true);
+                }}
               >
                 Apagar em massa
               </Button>
@@ -4963,7 +4986,7 @@ export function CoreXtreamPage() {
                   }}
                 >
                   <option value="">Todas as Categorias</option>
-                  {bouquets.map((b) => (
+                  {bouquetsForSeries.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
                     </option>
@@ -5019,7 +5042,7 @@ export function CoreXtreamPage() {
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-zinc-600 dark:text-zinc-400">
-                  <th className="py-2 pr-4">
+                  <th className="py-2 pr-4 sticky left-0 bg-white/90 dark:bg-zinc-950/90 backdrop-blur z-10">
                     <input
                       type="checkbox"
                       checked={series.length > 0 && series.every((s) => selectedSeriesIds.includes(s.id))}
@@ -5041,7 +5064,7 @@ export function CoreXtreamPage() {
               <tbody>
                 {series.map((s) => (
                   <tr key={s.id} className="border-t border-zinc-200/70 dark:border-zinc-800/70">
-                    <td className="py-3 pr-4">
+                    <td className="py-3 pr-4 sticky left-0 bg-white/90 dark:bg-zinc-950/90 backdrop-blur z-10">
                       <input
                         type="checkbox"
                         checked={selectedSeriesIds.includes(s.id)}
@@ -5120,7 +5143,7 @@ export function CoreXtreamPage() {
               <Button
                 variant="outline"
                 size="sm"
-                disabled={isBillingBlocked || selectedStreamIds.length === 0 || activeServersCount === 0}
+                disabled={isBillingBlocked || activeServersCount === 0}
                 onClick={() => {
                   if (activeServersCount === 0) {
                     toast.error('Nenhum servidor ativo cadastrado');
@@ -5139,8 +5162,12 @@ export function CoreXtreamPage() {
               <Button
                 variant="outline"
                 size="sm"
-                disabled={isBillingBlocked || selectedStreamIds.length === 0}
+                disabled={isBillingBlocked}
                 onClick={() => {
+                  if (!selectedStreamIds.length) {
+                    toast.error('Selecione pelo menos 1 stream');
+                    return;
+                  }
                   setBulkStreamForm({ status: 'keep', catchup: 'keep', catchupDays: '' });
                   setBulkEditStreamsModalOpen(true);
                 }}
@@ -5150,8 +5177,14 @@ export function CoreXtreamPage() {
               <Button
                 variant="danger"
                 size="sm"
-                disabled={isBillingBlocked || selectedStreamIds.length === 0}
-                onClick={() => setBulkDeleteStreamsModalOpen(true)}
+                disabled={isBillingBlocked}
+                onClick={() => {
+                  if (!selectedStreamIds.length) {
+                    toast.error('Selecione pelo menos 1 stream');
+                    return;
+                  }
+                  setBulkDeleteStreamsModalOpen(true);
+                }}
               >
                 Apagar em massa
               </Button>
@@ -5174,7 +5207,7 @@ export function CoreXtreamPage() {
                   }}
                 >
                   <option value="">Todas as Categorias</option>
-                  {bouquets.map((b) => (
+                  {bouquetsForStreams.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
                     </option>
@@ -5230,7 +5263,7 @@ export function CoreXtreamPage() {
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-zinc-600 dark:text-zinc-400">
-                  <th className="py-2 pr-4">
+                  <th className="py-2 pr-4 sticky left-0 bg-white/90 dark:bg-zinc-950/90 backdrop-blur z-10">
                     <input
                       type="checkbox"
                       checked={streams.length > 0 && streams.every((s) => selectedStreamIds.includes(s.id))}
@@ -5253,7 +5286,7 @@ export function CoreXtreamPage() {
               <tbody>
                 {streams.map((s) => (
                   <tr key={s.id} className="border-t border-zinc-200/70 dark:border-zinc-800/70">
-                    <td className="py-3 pr-4">
+                    <td className="py-3 pr-4 sticky left-0 bg-white/90 dark:bg-zinc-950/90 backdrop-blur z-10">
                       <input
                         type="checkbox"
                         checked={selectedStreamIds.includes(s.id)}

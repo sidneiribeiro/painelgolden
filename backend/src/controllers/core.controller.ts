@@ -2548,7 +2548,7 @@ export const listBouquets = asyncHandler(async (req: Request, res: Response) => 
   const bouquets = await prisma.coreBouquet.findMany({
     where: coreOwnerWhere(currentUser),
     include: {
-      _count: { select: { streams: true } },
+      _count: { select: { streams: true, vodItems: true, series: true } },
     },
     orderBy: [{ createdAt: 'desc' }],
   });
