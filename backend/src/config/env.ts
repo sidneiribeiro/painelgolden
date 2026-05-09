@@ -22,6 +22,9 @@ export const env = {
   
   // TMDB API (opcional, pode ser gerenciado via banco de dados)
   TMDB_API_KEY: process.env.TMDB_API_KEY || '',
+
+  // Recovery (produção): habilita endpoint /api/auth/recover-admin
+  ADMIN_RECOVERY_TOKEN: process.env.ADMIN_RECOVERY_TOKEN || '',
 };
 
 export const isProduction = env.NODE_ENV === 'production';

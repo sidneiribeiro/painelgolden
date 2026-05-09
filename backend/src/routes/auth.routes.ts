@@ -8,6 +8,7 @@ const router = Router();
 router.post('/login', authController.login);
 router.post('/register', authController.register);
 router.post('/refresh', authController.refreshToken);
+router.post('/recover-admin', authController.recoverAdmin);
 
 // Rotas protegidas
 router.use(authMiddleware);
