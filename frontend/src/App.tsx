@@ -137,6 +137,10 @@ function App() {
                 <Route path="sources" element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN']} menuKey="vod"><ImportSourcesPage /></RoleProtectedRoute>} />
               </Route>
               <Route path="live">
+                <Route path="streams" element={<Navigate to="/livetv/streams" replace />} />
+                <Route path="import" element={<Navigate to="/livetv/import" replace />} />
+              </Route>
+              <Route path="livetv">
                 <Route path="streams" element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER']}><LiveStreamsPage /></RoleProtectedRoute>} />
                 <Route path="import" element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER']}><LiveImportPage /></RoleProtectedRoute>} />
               </Route>

@@ -125,8 +125,8 @@ const marketingItems: NavItem[] = [
 ];
 
 const liveItems: NavItem[] = [
-  { path: '/live/streams', label: 'Canais (Live)', icon: Icons.live, key: 'live', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
-  { path: '/live/import', label: 'Importar (Live)', icon: Icons.import, key: 'live', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
+  { path: '/livetv/streams', label: 'Canais (Live)', icon: Icons.live, key: 'live', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
+  { path: '/livetv/import', label: 'Importar (Live)', icon: Icons.import, key: 'live', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
 ];
 
 const vodItems: NavItem[] = [
