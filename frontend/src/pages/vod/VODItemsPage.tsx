@@ -93,7 +93,7 @@ export function VODItemsPage() {
             Nenhum Servidor Cadastrado
           </h2>
           <p className="text-gray-600 dark:text-gray-400">
-            Cadastre um servidor XUI para visualizar os itens VOD.
+            Cadastre um servidor XUI para visualizar filmes e séries.
           </p>
         </Card>
       </div>
@@ -106,7 +106,7 @@ export function VODItemsPage() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl lg:text-3xl font-bold text-gray-900 dark:text-white">
-            Itens VOD
+            Filmes e Séries
           </h1>
           <p className="text-gray-600 dark:text-gray-400 mt-1">
             Filmes e Séries sincronizados
@@ -222,7 +222,7 @@ export function VODItemsPage() {
           </p>
           {serverId && (
             <p className="text-sm text-gray-500 dark:text-gray-500">
-              Verifique se você já importou itens VOD ou ajuste os filtros de busca.
+              Verifique se você já importou filmes/séries ou ajuste os filtros de busca.
             </p>
           )}
         </Card>
@@ -293,4 +293,3 @@ export function VODItemsPage() {
     </div>
   );
 }
-

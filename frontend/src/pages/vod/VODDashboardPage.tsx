@@ -118,7 +118,7 @@ export function VODDashboardPage() {
       onClick: () => navigate('/vod/items?vodType=series'),
     },
     {
-      title: 'Total VOD',
+      title: 'Total Filmes/Séries',
       value: (stats.total || 0).toLocaleString('pt-BR'),
       icon: CheckCircle,
       color: 'text-cyan-500',
@@ -150,7 +150,7 @@ export function VODDashboardPage() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl lg:text-3xl font-bold text-gray-900 dark:text-white">
-            Dashboard VOD
+            Dashboard Filmes e Séries
           </h1>
           <p className="text-gray-600 dark:text-gray-400 mt-1">
             {selectedServer?.name 
@@ -287,4 +287,3 @@ export function VODDashboardPage() {
 }
 
 export default VODDashboardPage;
-

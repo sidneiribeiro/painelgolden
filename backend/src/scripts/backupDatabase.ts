@@ -1,17 +1,29 @@
 import fs from "fs/promises";
 import path from "path";
-import { exec } from "child_process";
+import { exec, execFile } from "child_process";
 import { promisify } from "util";
 import { createLogger } from "../utils/logger.js";
 
 const logger = createLogger("Backup");
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface BackupInfo {
   filename: string;
   path: string;
   size: number;
   createdAt: Date;
+}
+
+function getBackupDir(): string {
+  const envDir = (process.env.BACKUP_DIR || "").trim();
+  const candidates = [
+    envDir || null,
+    path.join(process.cwd(), "storage", "backups"),
+    path.join(process.cwd(), "backups"),
+  ].filter(Boolean) as string[];
+
+  return candidates[0];
 }
 
 function getDatabaseType(): "sqlite" | "mysql" | "postgres" {
@@ -63,7 +75,7 @@ function parsePostgresUrl(url: string): { host: string; port: number; database: 
 
 export async function backupDatabase(): Promise<BackupInfo> {
   const dbType = getDatabaseType();
-  const backupDir = path.join(process.cwd(), "backups");
+  const backupDir = getBackupDir();
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 
   try {
@@ -80,6 +92,91 @@ export async function backupDatabase(): Promise<BackupInfo> {
     logger.error(`❌ Erro ao criar backup: ${error.message}`);
     throw error;
   }
+}
+
+export async function backupFull(): Promise<BackupInfo> {
+  const dbType = getDatabaseType();
+  if (dbType !== "postgres") {
+    throw new Error("Backup completo suportado apenas para PostgreSQL");
+  }
+
+  const backupDir = getBackupDir();
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  await fs.mkdir(backupDir, { recursive: true });
+
+  const archiveFilename = `full-backup-${timestamp}.tar.gz`;
+  const archivePath = path.join(backupDir, archiveFilename);
+
+  const dbUrl = process.env.DATABASE_URL || "";
+  const config = parsePostgresUrl(dbUrl);
+  if (!config) throw new Error("URL de conexão PostgreSQL inválida");
+
+  const dumpFilename = `db-${config.database}-${timestamp}.sql`;
+  const dumpPath = path.join("/tmp", dumpFilename);
+
+  const storageDir = path.join(process.cwd(), "storage");
+  const uploadsDir = path.join(process.cwd(), "public", "uploads");
+
+  await fs.mkdir(storageDir, { recursive: true });
+  await fs.mkdir(uploadsDir, { recursive: true });
+
+  try {
+    logger.info(`🔌 Criando dump PostgreSQL (full): ${config.database}@${config.host}`);
+    await execFileAsync(
+      "pg_dump",
+      [
+        "-h",
+        config.host,
+        "-p",
+        String(config.port),
+        "-U",
+        config.user,
+        "-d",
+        config.database,
+        "--clean",
+        "--if-exists",
+        "--no-owner",
+        "--no-privileges",
+        "--file",
+        dumpPath,
+      ],
+      { env: { ...process.env, PGPASSWORD: config.password } }
+    );
+
+    await execFileAsync(
+      "tar",
+      [
+        "--exclude=storage/backups",
+        "-czf",
+        archivePath,
+        "-C",
+        "/tmp",
+        dumpFilename,
+        "-C",
+        process.cwd(),
+        "storage",
+        "public/uploads",
+      ],
+      {}
+    );
+  } finally {
+    await fs.unlink(dumpPath).catch(() => {});
+  }
+
+  const stats = await fs.stat(archivePath);
+  const size = stats.size;
+
+  logger.info(`✅ Backup completo criado: ${archiveFilename} (${(size / 1024 / 1024).toFixed(2)} MB)`);
+
+  const keepFull = parseInt(process.env.BACKUP_KEEP_FULL_COUNT || "7", 10);
+  await cleanupOldBackups(backupDir, Number.isFinite(keepFull) ? keepFull : 7, "full-backup-");
+
+  return {
+    filename: archiveFilename,
+    path: archivePath,
+    size,
+    createdAt: new Date(),
+  };
 }
 
 async function backupMySQL(backupDir: string, timestamp: string): Promise<BackupInfo> {
@@ -130,19 +227,37 @@ async function backupPostgres(backupDir: string, timestamp: string): Promise<Bac
   const backupFilename = `postgres-backup-${config.database}-${timestamp}.sql`;
   const backupPath = path.join(backupDir, backupFilename);
 
-  const cmd = `PGPASSWORD="${config.password}" pg_dump -h ${config.host} -p ${config.port} -U ${config.user} -d ${config.database} --clean --if-exists --no-owner --no-privileges > "${backupPath}"`;
-
   logger.info(`🔌 Criando backup PostgreSQL: ${config.database}@${config.host}`);
 
   try {
-    await execAsync(cmd);
+    await execFileAsync(
+      "pg_dump",
+      [
+        "-h",
+        config.host,
+        "-p",
+        String(config.port),
+        "-U",
+        config.user,
+        "-d",
+        config.database,
+        "--clean",
+        "--if-exists",
+        "--no-owner",
+        "--no-privileges",
+        "--file",
+        backupPath,
+      ],
+      { env: { ...process.env, PGPASSWORD: config.password } }
+    );
 
     const stats = await fs.stat(backupPath);
     const size = stats.size;
 
     logger.info(`✅ Backup PostgreSQL criado: ${backupFilename} (${(size / 1024 / 1024).toFixed(2)} MB)`);
 
-    await cleanupOldBackups(backupDir, 30);
+    const keepDb = parseInt(process.env.BACKUP_KEEP_DB_COUNT || "48", 10);
+    await cleanupOldBackups(backupDir, Number.isFinite(keepDb) ? keepDb : 48, "postgres-backup-");
 
     return {
       filename: backupFilename,
@@ -187,7 +302,7 @@ async function backupSQLite(backupDir: string, timestamp: string): Promise<Backu
 }
 
 export async function listBackups(): Promise<BackupInfo[]> {
-  const backupDir = path.join(process.cwd(), "backups");
+  const backupDir = getBackupDir();
 
   try {
     await fs.access(backupDir);
@@ -201,7 +316,8 @@ export async function listBackups(): Promise<BackupInfo[]> {
   for (const file of files) {
     if (
       file.startsWith("dev.db.backup-") ||
-      ((file.startsWith("mysql-backup-") || file.startsWith("postgres-backup-")) && file.endsWith(".sql"))
+      ((file.startsWith("mysql-backup-") || file.startsWith("postgres-backup-")) && file.endsWith(".sql")) ||
+      (file.startsWith("full-backup-") && file.endsWith(".tar.gz"))
     ) {
       const filePath = path.join(backupDir, file);
       const stats = await fs.stat(filePath);
@@ -212,6 +328,9 @@ export async function listBackups(): Promise<BackupInfo[]> {
       }
       if (!timestampMatch) {
         timestampMatch = file.match(/postgres-backup-.*-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)\.sql/);
+      }
+      if (!timestampMatch) {
+        timestampMatch = file.match(/full-backup-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)\.tar\.gz/);
       }
       
       let createdAt = new Date();
@@ -235,9 +354,9 @@ export async function listBackups(): Promise<BackupInfo[]> {
   return backups;
 }
 
-async function cleanupOldBackups(backupDir: string, keepCount: number = 30): Promise<void> {
+async function cleanupOldBackups(backupDir: string, keepCount: number = 30, prefix?: string): Promise<void> {
   try {
-    const backups = await listBackups();
+    const backups = (await listBackups()).filter((b) => (prefix ? b.filename.startsWith(prefix) : true));
     
     if (backups.length > keepCount) {
       const toDelete = backups.slice(keepCount);
@@ -252,16 +371,46 @@ async function cleanupOldBackups(backupDir: string, keepCount: number = 30): Pro
 }
 
 export async function restoreBackup(backupFilename: string): Promise<void> {
-  const backupDir = path.join(process.cwd(), "backups");
+  const backupDir = getBackupDir();
   const backupPath = path.join(backupDir, backupFilename);
   const dbType = getDatabaseType();
 
   await fs.access(backupPath);
 
+  if (backupFilename.startsWith("full-backup-") && backupFilename.endsWith(".tar.gz")) {
+    return await restoreFullBackup(backupPath);
+  }
+
+  if (dbType === "postgres" && backupFilename.startsWith("postgres-backup-") && backupFilename.endsWith(".sql")) {
+    const dbUrl = process.env.DATABASE_URL || "";
+    const config = parsePostgresUrl(dbUrl);
+    if (!config) throw new Error("URL de conexão PostgreSQL inválida");
+
+    logger.warn(`⚠️  Restaurando PostgreSQL a partir de: ${backupFilename}`);
+    await execFileAsync(
+      "psql",
+      [
+        "-h",
+        config.host,
+        "-p",
+        String(config.port),
+        "-U",
+        config.user,
+        "-d",
+        config.database,
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-f",
+        backupPath,
+      ],
+      { env: { ...process.env, PGPASSWORD: config.password } }
+    );
+    logger.info(`✅ Backup PostgreSQL restaurado com sucesso: ${backupFilename}`);
+    return;
+  }
+
   if (dbType === "mysql" || dbType === "postgres") {
-    logger.warn(`⚠️  Restauração automática não suportada para este banco.`);
-    logger.info(`📋 Para restaurar o backup, importe o arquivo SQL manualmente: ${backupPath}`);
-    throw new Error("Restauração automática não suportada. Importe o arquivo SQL manualmente.");
+    throw new Error("Restauração automática não suportada para este arquivo/banco.");
   }
 
   const dbPath = path.join(process.cwd(), "prisma", "dev.db");
@@ -293,7 +442,7 @@ export async function restoreBackup(backupFilename: string): Promise<void> {
 }
 
 export async function deleteBackup(backupFilename: string): Promise<void> {
-  const backupDir = path.join(process.cwd(), "backups");
+  const backupDir = getBackupDir();
   const backupPath = path.join(backupDir, backupFilename);
 
   try {
@@ -303,6 +452,85 @@ export async function deleteBackup(backupFilename: string): Promise<void> {
     logger.error(`❌ Erro ao deletar backup: ${error.message}`);
     throw error;
   }
+}
+
+async function restoreFullBackup(archivePath: string): Promise<void> {
+  const dbUrl = process.env.DATABASE_URL || "";
+  const config = parsePostgresUrl(dbUrl);
+  if (!config) throw new Error("URL de conexão PostgreSQL inválida");
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const tempDir = path.join("/tmp", `restore-${stamp}`);
+  await fs.mkdir(tempDir, { recursive: true });
+
+  await execFileAsync("tar", ["-xzf", archivePath, "-C", tempDir], {});
+
+  const entries = await fs.readdir(tempDir);
+  const sqlFile = entries.find((f) => f.endsWith(".sql"));
+  if (!sqlFile) throw new Error("Backup completo inválido: dump SQL não encontrado");
+
+  const sqlPath = path.join(tempDir, sqlFile);
+
+  logger.warn(`⚠️  Restaurando PostgreSQL (full) a partir de: ${sqlFile}`);
+  await execFileAsync(
+    "psql",
+    [
+      "-h",
+      config.host,
+      "-p",
+      String(config.port),
+      "-U",
+      config.user,
+      "-d",
+      config.database,
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-f",
+      sqlPath,
+    ],
+    { env: { ...process.env, PGPASSWORD: config.password } }
+  );
+
+  const extractedStorage = path.join(tempDir, "storage");
+  const extractedUploads = path.join(tempDir, "public", "uploads");
+  const targetStorage = path.join(process.cwd(), "storage");
+  const targetUploads = path.join(process.cwd(), "public", "uploads");
+
+  await fs.mkdir(targetStorage, { recursive: true });
+  await fs.mkdir(targetUploads, { recursive: true });
+
+  const backupsDir = path.join(targetStorage, "backups");
+  await fs.mkdir(backupsDir, { recursive: true });
+
+  const storageEntries = await fs.readdir(targetStorage).catch(() => []);
+  for (const entry of storageEntries) {
+    if (entry === "backups") continue;
+    await fs.rm(path.join(targetStorage, entry), { recursive: true, force: true });
+  }
+
+  const uploadEntries = await fs.readdir(targetUploads).catch(() => []);
+  for (const entry of uploadEntries) {
+    await fs.rm(path.join(targetUploads, entry), { recursive: true, force: true });
+  }
+
+  const hasExtractedStorage = await fs.access(extractedStorage).then(() => true).catch(() => false);
+  if (hasExtractedStorage) {
+    const extractedStorageEntries = await fs.readdir(extractedStorage);
+    for (const entry of extractedStorageEntries) {
+      await fs.cp(path.join(extractedStorage, entry), path.join(targetStorage, entry), { recursive: true, force: true });
+    }
+  }
+
+  const hasExtractedUploads = await fs.access(extractedUploads).then(() => true).catch(() => false);
+  if (hasExtractedUploads) {
+    const extractedUploadEntries = await fs.readdir(extractedUploads);
+    for (const entry of extractedUploadEntries) {
+      await fs.cp(path.join(extractedUploads, entry), path.join(targetUploads, entry), { recursive: true, force: true });
+    }
+  }
+
+  await fs.rm(tempDir, { recursive: true, force: true });
+  logger.info(`✅ Backup completo restaurado com sucesso`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.includes("backupDatabase")) {

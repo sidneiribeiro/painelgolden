@@ -1,12 +1,28 @@
 import { Request, Response } from 'express';
 import { asyncHandler, AppError } from '../middleware/error.middleware.js';
 import { createLogger } from '../utils/logger.js';
-import { backupDatabase, listBackups, restoreBackup, deleteBackup } from '../scripts/backupDatabase.js';
+import { backupDatabase, listBackups, restoreBackup, deleteBackup, backupFull } from '../scripts/backupDatabase.js';
 // import { resetDatabase as resetDatabaseScript } from '../scripts/resetDatabase.js';
 import fs from 'fs';
 import path from 'path';
 
 const logger = createLogger('BackupController');
+
+function resolveBackupDir(): string {
+  const envDir = String(process.env.BACKUP_DIR || '').trim();
+  if (envDir) return envDir;
+  return path.join(process.cwd(), 'storage', 'backups');
+}
+
+function isValidBackupFilename(filename: string): boolean {
+  if (!filename) return false;
+  if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) return false;
+  if (filename.startsWith('dev.db.backup-')) return true;
+  if (filename.startsWith('mysql-backup-') && filename.endsWith('.sql')) return true;
+  if (filename.startsWith('postgres-backup-') && filename.endsWith('.sql')) return true;
+  if (filename.startsWith('full-backup-') && filename.endsWith('.tar.gz')) return true;
+  return false;
+}
 
 /**
  * Criar backup manual
@@ -15,7 +31,8 @@ export const createBackup = asyncHandler(async (req: Request, res: Response) => 
   logger.info('[Backup] Criando backup manual');
 
   try {
-    const backup = await backupDatabase();
+    const mode = String((req.query as any)?.mode || '').trim().toLowerCase();
+    const backup = mode === 'full' ? await backupFull() : await backupDatabase();
 
     res.json({
       success: true,
@@ -70,7 +87,7 @@ export const getBackups = asyncHandler(async (req: Request, res: Response) => {
 export const restoreBackupFile = asyncHandler(async (req: Request, res: Response) => {
   const { filename } = req.params;
 
-  if (!filename || !filename.startsWith('dev.db.backup-')) {
+  if (!isValidBackupFilename(filename)) {
     throw new AppError(400, 'Nome de arquivo inválido');
   }
 
@@ -125,7 +142,7 @@ export const resetDatabase = asyncHandler(async (req: Request, res: Response) =>
 export const removeBackup = asyncHandler(async (req: Request, res: Response) => {
   const { filename } = req.params;
 
-  if (!filename || !filename.startsWith('dev.db.backup-')) {
+  if (!isValidBackupFilename(filename)) {
     throw new AppError(400, 'Nome de arquivo inválido');
   }
 
@@ -150,11 +167,11 @@ export const removeBackup = asyncHandler(async (req: Request, res: Response) => 
 export const downloadBackup = asyncHandler(async (req: Request, res: Response) => {
   const { filename } = req.params;
 
-  if (!filename || !filename.startsWith('dev.db.backup-')) {
+  if (!isValidBackupFilename(filename)) {
     throw new AppError(400, 'Nome de arquivo inválido');
   }
 
-  const backupDir = path.join(process.cwd(), 'backups');
+  const backupDir = resolveBackupDir();
   const backupPath = path.join(backupDir, filename);
 
   logger.info(`[Backup] Tentando fazer download: ${filename}`);
@@ -196,4 +213,3 @@ export const downloadBackup = asyncHandler(async (req: Request, res: Response) =
     throw new AppError(500, 'Erro ao fazer download do backup');
   }
 });
-

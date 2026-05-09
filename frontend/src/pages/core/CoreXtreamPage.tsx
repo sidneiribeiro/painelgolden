@@ -251,6 +251,20 @@ type CoreEdgeServersMetricsResponse = {
   };
 };
 
+type CoreMainMetricsResponse = {
+  data: {
+    timestamp: string;
+    uptimeSeconds: number;
+    cpuPercent: number | null;
+    memPercent: number | null;
+    net: { rxBytes: string; txBytes: string } | null;
+    activeConnections: number | null;
+    activeUsers: number | null;
+    flowsOn: number | null;
+    flowsOff: number | null;
+  };
+};
+
 type CoreTerminateLineSessionsResponse = {
   ok: boolean;
   data: { lineId: string; count: number };
@@ -426,12 +440,25 @@ type CoreM3USchedule = {
   createdAt: string;
 };
 
-type TabKey = 'overview' | 'streams' | 'servers' | 'connections' | 'bouquets' | 'packages' | 'lines' | 'payments' | 'vod' | 'series' | 'schedules' | 'epg';
+type TabKey =
+  | 'overview'
+  | 'streams'
+  | 'monitor'
+  | 'servers'
+  | 'connections'
+  | 'bouquets'
+  | 'packages'
+  | 'lines'
+  | 'payments'
+  | 'vod'
+  | 'series'
+  | 'schedules'
+  | 'epg';
 
 const parseTabFromSearch = (search: string): TabKey => {
   const raw = new URLSearchParams(search || '').get('tab');
   const t = (raw || '').trim();
-  const allowed: TabKey[] = ['overview', 'streams', 'servers', 'connections', 'bouquets', 'packages', 'lines', 'payments', 'vod', 'series', 'schedules', 'epg'];
+  const allowed: TabKey[] = ['overview', 'streams', 'monitor', 'servers', 'connections', 'bouquets', 'packages', 'lines', 'payments', 'vod', 'series', 'schedules', 'epg'];
   return allowed.includes(t as TabKey) ? (t as TabKey) : 'lines';
 };
 
@@ -854,7 +881,7 @@ export function CoreXtreamPage() {
     if (status === 'success') {
       const imported = m3uImportJob?.result?.imported;
       const msg = imported
-        ? `Importado: categorias ${imported.bouquetsCreated}, live ${imported.streamsCreated}, vod ${imported.vodCreated}, séries ${imported.seriesCreated}, eps ${imported.episodesCreated}, skip ${imported.skipped}`
+        ? `Importado: categorias ${imported.bouquetsCreated}, live ${imported.streamsCreated}, filmes ${imported.vodCreated}, séries ${imported.seriesCreated}, eps ${imported.episodesCreated}, skip ${imported.skipped}`
         : 'Importação concluída';
       toast.success(msg);
       if (m3uImportJob?.result?.createdLine?.username && m3uImportJob?.result?.createdLine?.password) {
@@ -888,8 +915,8 @@ export function CoreXtreamPage() {
       const res = await api.get('/core/servers/status');
       return res.data;
     },
-    enabled: tab === 'servers',
-    refetchInterval: tab === 'servers' ? 10000 : false,
+    enabled: tab === 'servers' || tab === 'monitor',
+    refetchInterval: tab === 'servers' || tab === 'monitor' ? 10000 : false,
   });
 
   const { data: serversMetricsData, isLoading: serversMetricsLoading, refetch: serversMetricsRefetch } = useQuery<CoreEdgeServersMetricsResponse>({
@@ -898,8 +925,18 @@ export function CoreXtreamPage() {
       const res = await api.get('/core/servers/metrics');
       return res.data;
     },
-    enabled: tab === 'servers',
-    refetchInterval: tab === 'servers' ? 10000 : false,
+    enabled: tab === 'servers' || tab === 'monitor',
+    refetchInterval: tab === 'servers' || tab === 'monitor' ? 10000 : false,
+  });
+
+  const { data: mainMetricsData, isLoading: mainMetricsLoading, refetch: mainMetricsRefetch } = useQuery<CoreMainMetricsResponse>({
+    queryKey: ['core-main-metrics'],
+    queryFn: async () => {
+      const res = await api.get('/core/monitor/metrics');
+      return res.data;
+    },
+    enabled: tab === 'monitor',
+    refetchInterval: tab === 'monitor' ? 10000 : false,
   });
 
   const { data: bouquetsData, isLoading: bouquetsLoading } = useQuery<{ data: CoreBouquet[] }>({
@@ -1137,7 +1174,7 @@ export function CoreXtreamPage() {
       items.push({
         key: `vod:${v.id}`,
         tab: 'vod',
-        kind: 'VOD',
+        kind: 'Filme',
         name: v.name,
         imageUrl: v.posterUrl || null,
         createdAt: v.createdAt,
@@ -1837,12 +1874,12 @@ export function CoreXtreamPage() {
       return res.data;
     },
     onSuccess: () => {
-      toast.success('VOD criado');
+      toast.success('Filme criado');
       queryClient.invalidateQueries({ queryKey: ['core-vod'] });
       setVodModalOpen(false);
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Erro ao criar VOD');
+      toast.error(error.response?.data?.error || 'Erro ao criar filme');
     },
   });
 
@@ -1860,12 +1897,12 @@ export function CoreXtreamPage() {
       return res.data;
     },
     onSuccess: () => {
-      toast.success('VOD atualizado');
+      toast.success('Filme atualizado');
       queryClient.invalidateQueries({ queryKey: ['core-vod'] });
       setVodModalOpen(false);
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Erro ao atualizar VOD');
+      toast.error(error.response?.data?.error || 'Erro ao atualizar filme');
     },
   });
 
@@ -1896,11 +1933,11 @@ export function CoreXtreamPage() {
       await api.delete(`/core/vod/${id}`);
     },
     onSuccess: () => {
-      toast.success('VOD removido');
+      toast.success('Filme removido');
       queryClient.invalidateQueries({ queryKey: ['core-vod'] });
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Erro ao remover VOD');
+      toast.error(error.response?.data?.error || 'Erro ao remover filme');
     },
   });
 
@@ -2982,12 +3019,32 @@ export function CoreXtreamPage() {
     });
   };
 
-  const tabButtonClass = (key: TabKey) =>
-    `px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-      tab === key
-        ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
-        : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700'
-    }`;
+  const tabButtonClass = (key: TabKey) => {
+    const accents: Record<TabKey, string> = {
+      overview: 'from-cyan-500 to-blue-600 shadow-cyan-500/20',
+      lines: 'from-emerald-500 to-cyan-600 shadow-emerald-500/20',
+      connections: 'from-amber-500 to-orange-600 shadow-amber-500/20',
+      payments: 'from-fuchsia-500 to-violet-600 shadow-fuchsia-500/20',
+      packages: 'from-indigo-500 to-blue-600 shadow-indigo-500/20',
+      bouquets: 'from-sky-500 to-cyan-600 shadow-sky-500/20',
+      vod: 'from-rose-500 to-orange-500 shadow-rose-500/20',
+      series: 'from-violet-500 to-fuchsia-600 shadow-violet-500/20',
+      streams: 'from-cyan-500 to-emerald-600 shadow-cyan-500/20',
+      monitor: 'from-yellow-500 to-red-500 shadow-yellow-500/20',
+      servers: 'from-cyan-500 to-violet-600 shadow-cyan-500/20',
+      schedules: 'from-lime-500 to-emerald-600 shadow-lime-500/20',
+      epg: 'from-purple-500 to-indigo-600 shadow-purple-500/20',
+    };
+
+    const isActive = tab === key;
+    return [
+      'px-4 py-2 rounded-xl text-sm font-semibold transition-all',
+      'ring-1 ring-inset',
+      isActive
+        ? `bg-gradient-to-r ${accents[key]} text-white ring-white/10 shadow-sm`
+        : 'bg-white/70 text-zinc-800 ring-zinc-200 hover:bg-white dark:bg-zinc-900/60 dark:text-zinc-200 dark:ring-zinc-800 dark:hover:bg-zinc-900',
+    ].join(' ');
+  };
 
   const isBusy =
     streamsLoading ||
@@ -3067,9 +3124,9 @@ export function CoreXtreamPage() {
       <Card>
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-zinc-900 dark:text-white">Xtream Novo (Core)</h2>
+            <h2 className="text-xl font-semibold text-zinc-900 dark:text-white">Xtream Novo</h2>
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              Streams/VOD/Séries → Categorias → Pacotes → Clientes (XC via /get.php, /player_api.php)
+              Streams/Filmes/Séries → Categorias → Pacotes → Clientes (XC via /get.php, /player_api.php)
             </p>
           </div>
           <div className="flex flex-wrap gap-2 items-center">
@@ -3079,9 +3136,10 @@ export function CoreXtreamPage() {
             <button className={tabButtonClass('payments')} onClick={() => setActiveTab('payments')}>Pagamentos</button>
             <button className={tabButtonClass('packages')} onClick={() => setActiveTab('packages')}>Pacotes</button>
             <button className={tabButtonClass('bouquets')} onClick={() => setActiveTab('bouquets')}>Categorias</button>
-            <button className={tabButtonClass('vod')} onClick={() => setActiveTab('vod')}>VOD</button>
+            <button className={tabButtonClass('vod')} onClick={() => setActiveTab('vod')}>Filmes</button>
             <button className={tabButtonClass('series')} onClick={() => setActiveTab('series')}>Séries</button>
             <button className={tabButtonClass('streams')} onClick={() => setActiveTab('streams')}>Streams</button>
+            <button className={tabButtonClass('monitor')} onClick={() => setActiveTab('monitor')}>Monitoramento</button>
             <button className={tabButtonClass('servers')} onClick={() => setActiveTab('servers')}>Servidores</button>
             <button className={tabButtonClass('schedules')} onClick={() => setActiveTab('schedules')}>Agendas</button>
             <button className={tabButtonClass('epg')} onClick={() => setActiveTab('epg')}>EPG</button>
@@ -3197,7 +3255,7 @@ export function CoreXtreamPage() {
                 <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Ativos: {overviewCounts.activeStreams}</div>
               </div>
               <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
-                <div className="text-xs text-zinc-600 dark:text-zinc-400">VOD</div>
+                <div className="text-xs text-zinc-600 dark:text-zinc-400">FILMES</div>
                 <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{vodItems.length}</div>
                 <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Ativos: {overviewCounts.activeVod}</div>
               </div>
@@ -4498,8 +4556,8 @@ export function CoreXtreamPage() {
       {tab === 'vod' ? (
         <Card>
           <div className="flex items-center justify-between gap-3">
-            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">VOD</h3>
-            <Button onClick={openCreateVod} disabled={isBillingBlocked}>Novo VOD</Button>
+            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Filmes</h3>
+            <Button onClick={openCreateVod} disabled={isBillingBlocked}>Novo Filme</Button>
           </div>
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-sm">
@@ -4546,7 +4604,7 @@ export function CoreXtreamPage() {
                           size="sm"
                           disabled={isBillingBlocked}
                           onClick={() => {
-                            if (!confirm('Remover este VOD?')) return;
+                            if (!confirm('Remover este filme?')) return;
                             deleteVodMutation.mutate(v.id);
                           }}
                         >
@@ -4559,7 +4617,7 @@ export function CoreXtreamPage() {
                 {vodItems.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
-                      Nenhum VOD criado ainda
+                      Nenhum filme cadastrado ainda
                     </td>
                   </tr>
                 ) : null}
@@ -4790,6 +4848,128 @@ export function CoreXtreamPage() {
                 ) : null}
               </tbody>
             </table>
+          </div>
+        </Card>
+      ) : null}
+
+      {tab === 'monitor' ? (
+        <Card>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Monitoramento (Main + Balances)</h3>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  mainMetricsRefetch();
+                  serversStatusRefetch();
+                  serversMetricsRefetch();
+                }}
+                disabled={serversStatusLoading || serversMetricsLoading || mainMetricsLoading}
+              >
+                Refrescar
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setActiveTab('servers')}>
+                Abrir Servidores
+              </Button>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+              <div className="text-xs text-zinc-600 dark:text-zinc-400">MAIN CPU</div>
+              <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">
+                {mainMetricsData?.data?.cpuPercent === null || mainMetricsData?.data?.cpuPercent === undefined
+                  ? '-'
+                  : `${Math.round(mainMetricsData.data.cpuPercent)}%`}
+              </div>
+              <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">RAM: {mainMetricsData?.data?.memPercent === null || mainMetricsData?.data?.memPercent === undefined ? '-' : `${Math.round(mainMetricsData.data.memPercent)}%`}</div>
+            </div>
+            <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+              <div className="text-xs text-zinc-600 dark:text-zinc-400">MAIN CONEXÕES</div>
+              <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{mainMetricsData?.data?.activeConnections ?? '-'}</div>
+              <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Usuários: {mainMetricsData?.data?.activeUsers ?? '-'}</div>
+            </div>
+            <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+              <div className="text-xs text-zinc-600 dark:text-zinc-400">TOTAL ENTRADAS (BALANCES)</div>
+              <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{formatMbps(totalsByServers.rx)}</div>
+            </div>
+            <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+              <div className="text-xs text-zinc-600 dark:text-zinc-400">SERVIDORES ONLINE</div>
+              <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{serversOnlineCount}/{serversInstalled.length}</div>
+              <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">OFF: {totalsByServers.flowsOff}</div>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {servers
+              .filter((s) => s.isActive && !!(s as any).installedAt)
+              .map((s) => {
+                const mt = serverMetricsById[s.id];
+                const rates = serverNetRates[s.id];
+
+                const cpu = mt?.metrics?.cpuPercent;
+                const mem = mt?.metrics?.memPercent;
+                const conns = mt?.metrics?.activeConnections;
+                const users = mt?.metrics?.activeUsers;
+                const flowsOn = mt?.metrics?.flowsOn;
+                const flowsOff = mt?.metrics?.flowsOff;
+
+                const hasOff = typeof flowsOff === 'number' && flowsOff > 0;
+                const warn = !mt?.ok || hasOff || (typeof cpu === 'number' && cpu >= 90) || (typeof mem === 'number' && mem >= 90);
+
+                return (
+                  <div key={s.id} className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-semibold text-zinc-900 dark:text-white truncate">{s.name}</div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={mt ? (mt.ok ? (warn ? 'warning' : 'success') : 'warning') : 'info'}>
+                          {mt ? (mt.ok ? (warn ? 'ATENÇÃO' : 'OK') : 'OFFLINE') : '...'}
+                        </Badge>
+                        <span className="text-xs text-zinc-600 dark:text-zinc-400">{mt?.ok ? `${mt.ms} ms` : '-'}</span>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                      <div className="text-zinc-600 dark:text-zinc-400">CPU</div>
+                      <div className="text-right text-zinc-900 dark:text-white">{cpu === null || cpu === undefined ? '-' : `${Math.round(cpu)}%`}</div>
+                      <div className="text-zinc-600 dark:text-zinc-400">RAM</div>
+                      <div className="text-right text-zinc-900 dark:text-white">{mem === null || mem === undefined ? '-' : `${Math.round(mem)}%`}</div>
+                      <div className="text-zinc-600 dark:text-zinc-400">Conexões</div>
+                      <div className="text-right text-zinc-900 dark:text-white">{conns ?? '-'}</div>
+                      <div className="text-zinc-600 dark:text-zinc-400">Usuários</div>
+                      <div className="text-right text-zinc-900 dark:text-white">{users ?? '-'}</div>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                      <div className="text-zinc-600 dark:text-zinc-400">Entradas</div>
+                      <div className="text-right text-zinc-900 dark:text-white">{formatMbps(rates?.rxMbps)}</div>
+                      <div className="text-zinc-600 dark:text-zinc-400">Saídas</div>
+                      <div className="text-right text-zinc-900 dark:text-white">{formatMbps(rates?.txMbps)}</div>
+                      <div className="text-zinc-600 dark:text-zinc-400">Fluxos ON</div>
+                      <div className="text-right text-zinc-900 dark:text-white">{flowsOn ?? '-'}</div>
+                      <div className="text-zinc-600 dark:text-zinc-400">Fluxos OFF</div>
+                      <div className="text-right text-zinc-900 dark:text-white">{flowsOff ?? '-'}</div>
+                    </div>
+
+                    {isAdmin ? (
+                      <div className="mt-3 flex justify-end">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={isBillingBlocked}
+                          onClick={() => {
+                            if (!confirm('Executar reparo/instalação no balance (NGINX + health)?')) return;
+                            startServerInstallMutation.mutate(s.id);
+                          }}
+                        >
+                          Reparar
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
           </div>
         </Card>
       ) : null}
@@ -5764,7 +5944,7 @@ export function CoreXtreamPage() {
               <option value="live">Live</option>
               <option value="movie">Filmes</option>
               <option value="series">Séries</option>
-              <option value="vod">VOD (filme+série)</option>
+              <option value="vod">Filmes + Séries</option>
             </Select>
             <Select
               label="Modo"
@@ -5833,7 +6013,7 @@ export function CoreXtreamPage() {
               <option value="live">Live</option>
               <option value="movie">Filmes</option>
               <option value="series">Séries</option>
-              <option value="vod">VOD (filme+série)</option>
+              <option value="vod">Filmes + Séries</option>
             </Select>
             <Select
               label="Modo"
@@ -5903,7 +6083,7 @@ export function CoreXtreamPage() {
               checked={importForm.enrichWithTMDB}
               onChange={(e) => setImportForm((p) => ({ ...p, enrichWithTMDB: e.target.checked }))}
             />
-            <span className="text-sm text-zinc-800 dark:text-zinc-200">Usar TMDB para capas (VOD e Séries)</span>
+            <span className="text-sm text-zinc-800 dark:text-zinc-200">Usar TMDB para capas (Filmes e Séries)</span>
           </label>
 
           <div className="flex justify-end gap-2">
@@ -5936,7 +6116,7 @@ export function CoreXtreamPage() {
           setVodModalOpen(false);
           setVodPosterFile(null);
         }}
-        title={editingVod ? 'Editar VOD' : 'Novo VOD'}
+        title={editingVod ? 'Editar Filme' : 'Novo Filme'}
         size="lg"
       >
         <div className="space-y-4">

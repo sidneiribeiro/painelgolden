@@ -9,6 +9,7 @@ import {
   listEdgeServers,
   getEdgeServersStatus,
   getEdgeServersMetrics,
+  getMainMetrics,
   createEdgeServer,
   updateEdgeServer,
   deleteEdgeServer,
@@ -96,6 +97,7 @@ router.delete('/streams/:id', requireBillingValid, removeStream);
 router.get('/servers', listEdgeServers);
 router.get('/servers/status', requireBillingValid, getEdgeServersStatus);
 router.get('/servers/metrics', requireBillingValid, getEdgeServersMetrics);
+router.get('/monitor/metrics', requireBillingValid, getMainMetrics);
 router.post('/servers', requireBillingValid, createEdgeServer);
 router.put('/servers/:id', requireBillingValid, updateEdgeServer);
 router.delete('/servers/:id', requireBillingValid, deleteEdgeServer);

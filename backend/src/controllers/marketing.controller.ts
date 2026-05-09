@@ -67,8 +67,6 @@ export const saveMarketingConfig = asyncHandler(async (req: Request, res: Respon
   const {
     painelName,
     painelLogo,
-    telegramBotToken,
-    telegramChatId,
     whatsappNumber,
     primaryColor,
     secondaryColor,
@@ -84,8 +82,6 @@ export const saveMarketingConfig = asyncHandler(async (req: Request, res: Respon
     update: {
       painelName: painelName || 'PAINEL MASTER',
       painelLogo: painelLogo || undefined,
-      telegramBotToken: telegramBotToken || undefined,
-      telegramChatId: telegramChatId || undefined,
       whatsappNumber: whatsappNumber || undefined,
       primaryColor: primaryColor || '#00E5FF',
       secondaryColor: secondaryColor || '#1E88E5',
@@ -94,12 +90,12 @@ export const saveMarketingConfig = asyncHandler(async (req: Request, res: Respon
       videoMusicFilmes: videoMusicFilmes || undefined,
       videoMusicSeries: videoMusicSeries || undefined,
       videoMusicFutebol: videoMusicFutebol || undefined,
+      telegramBotToken: null,
+      telegramChatId: null,
     },
     create: {
       painelName: painelName || 'PAINEL MASTER',
       painelLogo: painelLogo || undefined,
-      telegramBotToken: telegramBotToken || undefined,
-      telegramChatId: telegramChatId || undefined,
       whatsappNumber: whatsappNumber || undefined,
       primaryColor: primaryColor || '#00E5FF',
       secondaryColor: secondaryColor || '#1E88E5',

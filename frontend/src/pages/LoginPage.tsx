@@ -73,7 +73,7 @@ export function LoginPage() {
           <h1 className="text-2xl font-bold bg-gradient-to-r from-cyan-600 to-violet-600 dark:from-cyan-400 dark:to-violet-400 bg-clip-text text-transparent">
             {panelSettings?.panelName || 'PAINEL MASTER'}
           </h1>
-          <p className="text-zinc-500 dark:text-zinc-400 mt-2 text-sm">Sistema de Gestão de Revenda</p>
+          <p className="text-zinc-500 dark:text-zinc-400 mt-2 text-sm">Xtream Novo • Painel de Revendas</p>
         </div>
 
         {/* Form */}
@@ -117,7 +117,7 @@ export function LoginPage() {
             Sistema protegido. Acesso restrito a usuários autorizados.
           </p>
           <p className="text-center text-xs text-zinc-400 dark:text-zinc-500 mt-2">
-            v2.0.3 • PainelMaster
+            v2.0.3 • Xtream Novo
           </p>
         </div>
       </Card>

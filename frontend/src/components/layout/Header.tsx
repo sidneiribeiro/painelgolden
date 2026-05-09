@@ -25,8 +25,8 @@ const pageTitles: Record<string, string> = {
 
 export function Header({ onMenuClick }: HeaderProps) {
   const location = useLocation();
-  const title = pageTitles[location.pathname] || 'PainelMaster';
   const { data: panelSettings } = usePanelSettings();
+  const title = pageTitles[location.pathname] || panelSettings?.panelName || 'Xtream Novo';
 
   return (
     <header className="sticky top-0 z-30 backdrop-blur-xl bg-white/80 dark:bg-zinc-950/80 border-b border-zinc-200/50 dark:border-zinc-800/50">

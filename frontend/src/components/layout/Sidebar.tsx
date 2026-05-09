@@ -74,7 +74,7 @@ export const MENU_KEY_LABELS: Record<string, string> = {
   bouquets: 'Categorias',
   users: 'Revendedores',
   resellers: 'Revendedores',
-  vod: 'VOD',
+  vod: 'Filmes',
   live: 'LIVE TV',
   marketing: 'Marketing',
   premium: 'Premium',

@@ -34,18 +34,18 @@ export function RoleProtectedRoute({
     return <>{children}</>;
   }
 
-  if (allowedRoles.includes(user.role)) {
-    return <>{children}</>;
+  if (!allowedRoles.includes(user.role)) {
+    return <Navigate to={redirectTo} replace />;
   }
 
   if (menuKey && (user.role === 'MASTER_RESELLER' || user.role === 'RESELLER')) {
     const perms = parseMenuPermissions((user as any).menuPermissions);
-    if (perms && perms.includes(menuKey)) {
-      return <>{children}</>;
+    if (perms) {
+      if (!perms.includes(menuKey)) return <Navigate to={redirectTo} replace />;
     }
   }
 
-  return <Navigate to={redirectTo} replace />;
+  return <>{children}</>;
 }
 
 export default RoleProtectedRoute;

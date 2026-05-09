@@ -237,19 +237,21 @@ export function AsaasPage() {
           </ol>
           <div className="bg-white dark:bg-zinc-900 p-3 rounded border border-amber-200 dark:border-amber-500/30">
             <code className="text-sm text-zinc-900 dark:text-white break-all">
-              {typeof window !== 'undefined' 
-                ? `${window.location.origin}/api/asaas/webhook/${config.webhookToken}`
-                : `[URL do servidor]/api/asaas/webhook/${config.webhookToken}`
-              }
+              {config.webhookUrl ||
+                (typeof window !== 'undefined'
+                  ? `${window.location.origin}/api/asaas/webhook/${config.webhookToken}`
+                  : `[URL do servidor]/api/asaas/webhook/${config.webhookToken}`)}
             </code>
             <Button
               size="sm"
               variant="outline"
               className="mt-2"
               onClick={() => {
-                const url = typeof window !== 'undefined' 
-                  ? `${window.location.origin}/api/asaas/webhook/${config.webhookToken}`
-                  : '';
+                const url =
+                  config.webhookUrl ||
+                  (typeof window !== 'undefined'
+                    ? `${window.location.origin}/api/asaas/webhook/${config.webhookToken}`
+                    : '');
                 if (url) {
                   navigator.clipboard.writeText(url);
                   toast.success('URL copiada!');
@@ -304,4 +306,3 @@ export function AsaasPage() {
     </div>
   );
 }
-

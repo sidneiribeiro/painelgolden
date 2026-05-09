@@ -38,6 +38,54 @@ type CoreEdgeJob = {
 const coreEdgeJobs = new Map<string, CoreEdgeJob>();
 const coreEdgeJobConnections = new Map<string, any>();
 
+let mainMetricsLastCpuSample: { idle: number; total: number } | null = null;
+const readMainCpuSample = async () => {
+  const text = await fs.readFile('/proc/stat', 'utf8');
+  const first = text.split('\n')[0] || '';
+  const cols = first.trim().split(/\s+/);
+  if (cols[0] !== 'cpu') return null;
+  const nums = cols.slice(1).map((x) => parseInt(x, 10)).filter((n) => Number.isFinite(n));
+  if (nums.length < 4) return null;
+  const idle = (nums[3] || 0) + (nums[4] || 0);
+  const total = nums.reduce((a, b) => a + b, 0);
+  return { idle, total };
+};
+
+const readMainMemPercent = async () => {
+  const text = await fs.readFile('/proc/meminfo', 'utf8');
+  const lines = text.split('\n');
+  const getKb = (key: string) => {
+    const line = lines.find((l) => l.startsWith(key));
+    if (!line) return null;
+    const m = line.match(/(\d+)/);
+    return m ? parseInt(m[1], 10) : null;
+  };
+  const total = getKb('MemTotal:');
+  const avail = getKb('MemAvailable:');
+  if (!total || !avail) return null;
+  const used = Math.max(0, total - avail);
+  return Math.max(0, Math.min(100, (used / total) * 100));
+};
+
+const readMainNetBytes = async () => {
+  const text = await fs.readFile('/proc/net/dev', 'utf8');
+  const lines = text.split('\n').slice(2).map((l) => l.trim()).filter(Boolean);
+  let rx = 0n;
+  let tx = 0n;
+  for (const l of lines) {
+    const [ifacePart, rest] = l.split(':');
+    const iface = (ifacePart || '').trim();
+    if (!iface || iface === 'lo') continue;
+    const cols = (rest || '').trim().split(/\s+/);
+    if (cols.length < 16) continue;
+    const rxBytes = BigInt(cols[0] || '0');
+    const txBytes = BigInt(cols[8] || '0');
+    rx += rxBytes;
+    tx += txBytes;
+  }
+  return { rxBytes: rx.toString(), txBytes: tx.toString() };
+};
+
 function addCoreEdgeJobLog(jobId: string, message: string) {
   const job = coreEdgeJobs.get(jobId);
   if (!job) return;
@@ -1567,6 +1615,75 @@ export const getEdgeServersMetrics = asyncHandler(async (req: Request, res: Resp
       checkedAt: new Date().toISOString(),
       total: servers.length,
       results,
+    },
+  });
+});
+
+export const getMainMetrics = asyncHandler(async (_req: Request, res: Response) => {
+  const now = new Date();
+  const freshAfter = new Date(Date.now() - 90_000);
+  const staleWindowAfter = new Date(Date.now() - 30 * 60_000);
+
+  const [cpuNow, memPercent, net, activeSessions, distinctLines, staleSessions] = await Promise.all([
+    readMainCpuSample().catch(() => null),
+    readMainMemPercent().catch(() => null),
+    readMainNetBytes().catch(() => null),
+    prisma.corePlaybackSession
+      .count({
+        where: {
+          endedAt: null,
+          status: 'active',
+          lastSeenAt: { gt: freshAfter },
+        },
+      })
+      .catch(() => null),
+    prisma.corePlaybackSession
+      .findMany({
+        where: {
+          endedAt: null,
+          status: 'active',
+          lastSeenAt: { gt: freshAfter },
+        },
+        distinct: ['lineId'],
+        select: { lineId: true },
+      })
+      .then((rows) => rows.length)
+      .catch(() => null),
+    prisma.corePlaybackSession
+      .count({
+        where: {
+          endedAt: null,
+          status: 'active',
+          lastSeenAt: { lte: freshAfter, gt: staleWindowAfter },
+        },
+      })
+      .catch(() => null),
+  ]);
+
+  let cpuPercent: number | null = null;
+  if (cpuNow) {
+    if (mainMetricsLastCpuSample) {
+      const idleDelta = cpuNow.idle - mainMetricsLastCpuSample.idle;
+      const totalDelta = cpuNow.total - mainMetricsLastCpuSample.total;
+      if (totalDelta > 0) {
+        const usage = 1 - idleDelta / totalDelta;
+        cpuPercent = Math.max(0, Math.min(100, usage * 100));
+      }
+    }
+    mainMetricsLastCpuSample = cpuNow;
+  }
+
+  res.json({
+    data: {
+      timestamp: now.toISOString(),
+      uptimeSeconds: Math.floor(process.uptime()),
+      cpuPercent,
+      memPercent,
+      net,
+      activeConnections: typeof activeSessions === 'number' ? activeSessions : null,
+      activeUsers: typeof distinctLines === 'number' ? distinctLines : null,
+      flowsOn: typeof activeSessions === 'number' ? activeSessions : null,
+      flowsOff: typeof staleSessions === 'number' ? staleSessions : null,
     },
   });
 });
