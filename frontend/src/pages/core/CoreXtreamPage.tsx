@@ -1818,16 +1818,16 @@ export function CoreXtreamPage() {
 
   const importM3UMutation = useMutation({
     mutationFn: async () => {
-      const payload = {
+      const payload: any = {
         url: normalizeM3UUrlInput(importForm.url),
         mode: importForm.mode,
         type: importForm.type,
         createPackage: importForm.createPackage,
-        packageName: importForm.packageName,
+        packageName: importForm.createPackage ? importForm.packageName : undefined,
         createLine: importForm.createLine,
-        lineUsername: importForm.lineUsername,
-        linePassword: importForm.linePassword,
-        lineExpiresDays: importForm.lineExpiresDays,
+        lineUsername: importForm.createLine ? importForm.lineUsername : undefined,
+        linePassword: importForm.createLine ? importForm.linePassword : undefined,
+        lineExpiresDays: importForm.createLine ? importForm.lineExpiresDays : undefined,
         background: importForm.background,
         enrichWithTMDB: importForm.enrichWithTMDB,
       };
@@ -1857,7 +1857,13 @@ export function CoreXtreamPage() {
       setImportModalOpen(false);
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Erro ao importar M3U');
+      const msg = error.response?.data?.error || 'Erro ao importar M3U';
+      const details = Array.isArray(error.response?.data?.details) ? error.response.data.details : null;
+      if (details && details.length > 0 && details[0]?.message) {
+        toast.error(`${msg}: ${details[0].message}`);
+      } else {
+        toast.error(msg);
+      }
     },
   });
 
