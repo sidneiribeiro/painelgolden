@@ -17,6 +17,18 @@ router.get('/categories', requireRole('SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER')
 router.get('/bouquets', requireRole('SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'), liveController.getBouquets);
 router.get('/streams', requireRole('SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'), liveController.getStreams);
 
+// BULK: Gestão em massa (LIVE)
+router.put(
+  '/streams/bulk',
+  requireRole('SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'),
+  liveController.bulkUpdateStreams
+);
+router.delete(
+  '/streams/bulk',
+  requireRole('SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'),
+  liveController.bulkDeleteStreams
+);
+
 // PUT: Gestão de streams (LIVE)
 router.put(
   '/streams/:streamId',

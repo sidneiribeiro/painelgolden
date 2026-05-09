@@ -39,6 +39,7 @@ export function LiveStreamsPage() {
   const [keyword, setKeyword] = useState('');
   const [categoryId, setCategoryId] = useState<string>('');
   const [page, setPage] = useState(1);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   const [editing, setEditing] = useState<LiveStreamItem | null>(null);
   const [editOpen, setEditOpen] = useState(false);
@@ -49,6 +50,15 @@ export function LiveStreamsPage() {
     categoryId: '',
     enabled: true,
   });
+
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkForm, setBulkForm] = useState({
+    categoryId: '',
+    enabled: '',
+    icon: '',
+  });
+
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   const { data: serversData, isLoading: isLoadingServers } = useQuery({
     queryKey: ['xui-servers'],
@@ -98,6 +108,31 @@ export function LiveStreamsPage() {
   const perPage = streamsData?.perPage || 50;
   const totalPages = Math.max(1, Math.ceil(total / perPage));
 
+  const allPageSelected = streams.length > 0 && streams.every((s) => selectedIds.has(s.id));
+
+  const clearSelection = () => setSelectedIds(new Set());
+  const toggleSelectAllPage = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (streams.length === 0) return next;
+      const shouldSelect = !streams.every((s) => next.has(s.id));
+      for (const s of streams) {
+        if (shouldSelect) next.add(s.id);
+        else next.delete(s.id);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectOne = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   const updateMutation = useMutation({
     mutationFn: async (payload: {
       id: number;
@@ -126,6 +161,41 @@ export function LiveStreamsPage() {
     },
   });
 
+  const bulkUpdateMutation = useMutation({
+    mutationFn: async (payload: {
+      streamIds: number[];
+      categoryId?: number;
+      enabled?: boolean;
+      icon?: string;
+    }) => {
+      const params = new URLSearchParams({ serverId });
+      const res = await api.put(`/live/streams/bulk?${params.toString()}`, payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['live-streams'] });
+      toast.success('Atualização em massa concluída');
+    },
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.error || 'Erro ao atualizar em massa');
+    },
+  });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (payload: { streamIds: number[] }) => {
+      const params = new URLSearchParams({ serverId });
+      const res = await api.delete(`/live/streams/bulk?${params.toString()}`, { data: payload });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['live-streams'] });
+      toast.success('Canais removidos');
+    },
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.error || 'Erro ao remover em massa');
+    },
+  });
+
   const openEdit = (item: LiveStreamItem) => {
     setEditing(item);
     setEditForm({
@@ -141,6 +211,41 @@ export function LiveStreamsPage() {
   const closeEdit = () => {
     setEditOpen(false);
     setEditing(null);
+  };
+
+  const openBulkEdit = () => {
+    setBulkForm({ categoryId: '', enabled: '', icon: '' });
+    setBulkOpen(true);
+  };
+
+  const closeBulkEdit = () => setBulkOpen(false);
+
+  const applyBulkEdit = async () => {
+    const streamIds = Array.from(selectedIds);
+    if (streamIds.length === 0) return;
+
+    const categoryIdNum = bulkForm.categoryId ? parseInt(bulkForm.categoryId, 10) : undefined;
+    const enabledVal =
+      bulkForm.enabled === '' ? undefined : bulkForm.enabled === '1';
+    const iconVal = bulkForm.icon.trim() ? bulkForm.icon.trim() : undefined;
+
+    await bulkUpdateMutation.mutateAsync({
+      streamIds,
+      categoryId: categoryIdNum,
+      enabled: enabledVal,
+      icon: iconVal,
+    });
+
+    closeBulkEdit();
+    clearSelection();
+  };
+
+  const confirmBulkDelete = async () => {
+    const streamIds = Array.from(selectedIds);
+    if (streamIds.length === 0) return;
+    await bulkDeleteMutation.mutateAsync({ streamIds });
+    setBulkDeleteOpen(false);
+    clearSelection();
   };
 
   const applyEdit = async () => {
@@ -173,6 +278,31 @@ export function LiveStreamsPage() {
           <p className="text-zinc-600 dark:text-zinc-400">Listar e editar canais LIVE no Xtream UI</p>
         </div>
       </div>
+
+      {selectedIds.size > 0 ? (
+        <Card className="p-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div className="text-sm text-zinc-600 dark:text-zinc-400">
+              Selecionados: <span className="font-semibold text-zinc-900 dark:text-zinc-100">{selectedIds.size}</span>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="secondary" onClick={openBulkEdit} disabled={!serverId}>
+                Editar em massa
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => setBulkDeleteOpen(true)}
+                disabled={!serverId || bulkDeleteMutation.isPending}
+              >
+                Apagar em massa
+              </Button>
+              <Button variant="secondary" onClick={clearSelection}>
+                Limpar seleção
+              </Button>
+            </div>
+          </div>
+        </Card>
+      ) : null}
 
       <Card className="p-6">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
@@ -260,6 +390,13 @@ export function LiveStreamsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-zinc-600 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
+                    <th className="py-2 pr-3">
+                      <input
+                        type="checkbox"
+                        checked={allPageSelected}
+                        onChange={toggleSelectAllPage}
+                      />
+                    </th>
                     <th className="py-2 pr-3">ID</th>
                     <th className="py-2 pr-3">Nome</th>
                     <th className="py-2 pr-3">Categoria</th>
@@ -271,6 +408,13 @@ export function LiveStreamsPage() {
                 <tbody>
                   {streams.map((s) => (
                     <tr key={s.id} className="border-b border-zinc-100 dark:border-zinc-900">
+                      <td className="py-2 pr-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(s.id)}
+                          onChange={() => toggleSelectOne(s.id)}
+                        />
+                      </td>
                       <td className="py-2 pr-3 text-zinc-500">{s.id}</td>
                       <td className="py-2 pr-3">
                         <div className="flex items-center gap-2">
@@ -314,7 +458,7 @@ export function LiveStreamsPage() {
                   ))}
                   {streams.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-6 text-center text-zinc-500">
+                      <td colSpan={7} className="py-6 text-center text-zinc-500">
                         Nenhum canal encontrado
                       </td>
                     </tr>
@@ -376,7 +520,67 @@ export function LiveStreamsPage() {
           </div>
         </div>
       </Modal>
+
+      <Modal isOpen={bulkOpen} onClose={closeBulkEdit} title="Editar em Massa">
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-2">Categoria</label>
+            <Select
+              value={bulkForm.categoryId}
+              onChange={(e) => setBulkForm({ ...bulkForm, categoryId: e.target.value })}
+            >
+              <option value="">Não alterar</option>
+              <option value="0">Sem categoria</option>
+              {categories.map((c) => (
+                <option key={c.id} value={String(c.id)}>
+                  {c.category_name}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-2">Status</label>
+            <Select
+              value={bulkForm.enabled}
+              onChange={(e) => setBulkForm({ ...bulkForm, enabled: e.target.value })}
+            >
+              <option value="">Não alterar</option>
+              <option value="1">Ativar</option>
+              <option value="0">Desativar</option>
+            </Select>
+          </div>
+          <Input
+            label="Icon URL"
+            placeholder="http://..."
+            value={bulkForm.icon}
+            onChange={(e) => setBulkForm({ ...bulkForm, icon: e.target.value })}
+          />
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" onClick={closeBulkEdit}>
+              Cancelar
+            </Button>
+            <Button onClick={applyBulkEdit} disabled={bulkUpdateMutation.isPending}>
+              Aplicar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={bulkDeleteOpen} onClose={() => setBulkDeleteOpen(false)} title="Apagar em Massa">
+        <div className="space-y-4">
+          <div className="text-sm text-zinc-600 dark:text-zinc-400">
+            Remover <span className="font-semibold text-zinc-900 dark:text-zinc-100">{selectedIds.size}</span> canal(is) do servidor selecionado.
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="secondary" onClick={() => setBulkDeleteOpen(false)}>
+              Cancelar
+            </Button>
+            <Button variant="danger" onClick={confirmBulkDelete} disabled={bulkDeleteMutation.isPending}>
+              Apagar
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
-
