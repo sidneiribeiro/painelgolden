@@ -13,6 +13,7 @@ import { asyncHandler, AppError } from '../middleware/error.middleware.js';
 import { getAsaasService } from '../services/asaas.service.js';
 import { whatsappService } from '../services/whatsapp.service.js';
 import { M3UParser } from '../services/import/m3u-parser.js';
+import { TMDBService } from '../services/vod/tmdb.service.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { createLogger } from '../utils/logger.js';
 import { processTemplate } from '../utils/templates.js';
@@ -214,6 +215,7 @@ const importM3USchema = z.object({
   linePassword: z.string().min(4).max(128).optional(),
   lineExpiresDays: z.union([z.number(), z.string()]).transform(v => toInt(v, 30)).optional(),
   background: z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true').optional(),
+  enrichWithTMDB: z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true').optional(),
 });
 
 const m3uScheduleSchema = z.object({
@@ -408,6 +410,23 @@ function isPrismaUniqueError(error: any) {
   return msg.includes('Unique constraint') || msg.includes('unique constraint');
 }
 
+function cleanTitleForTMDB(title: string): string {
+  return (title || '')
+    .replace(/\s*[-–]\s*(19|20)\d{2}\s*$/i, '')
+    .replace(/\s*\((19|20)\d{2}\)\s*/g, '')
+    .replace(/\s+(19|20)\d{2}\s*$/i, '')
+    .replace(/\s*[-–]?\s*(4k|1080p|720p|hd|fhd|uhd|bluray|webrip|hdtv|web-?dl|bdrip|dvdrip)\s*$/gi, '')
+    .replace(/\s*[-–]?\s*(dublado|legendado|dual\s*audio|portuguese|english|ptbr|pt-br)\s*$/gi, '')
+    .trim();
+}
+
+function extractYearFromTitle(title: string): number | undefined {
+  const m = String(title || '').match(/(?:^|[\s(])((19|20)\d{2})(?:[\s)]|$)/);
+  if (!m) return undefined;
+  const y = parseInt(m[1], 10);
+  return Number.isFinite(y) ? y : undefined;
+}
+
 async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
   const {
     url,
@@ -419,7 +438,14 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
     lineUsername,
     linePassword,
     lineExpiresDays = 30,
+    enrichWithTMDB = false,
   } = input;
+
+  const tmdbService = enrichWithTMDB ? new TMDBService(env.TMDB_API_KEY) : null;
+  const tmdbMoviePosterByName = new Map<string, string | null>();
+  const tmdbSeriesCoverByName = new Map<string, string | null>();
+  let tmdbProcessed = 0;
+  const tmdbMaxItems = 2500;
 
   const parser = new M3UParser();
   const parsed = await parser.parseFromUrl(url, 120000);
@@ -570,6 +596,32 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
 
     if (item.type === 'movie') {
       try {
+        let posterUrl = item.logo || null;
+        if (tmdbService && tmdbProcessed < tmdbMaxItems) {
+          const clean = cleanTitleForTMDB(item.name);
+          const cacheKey = clean.toLowerCase();
+          if (tmdbMoviePosterByName.has(cacheKey)) {
+            const cached = tmdbMoviePosterByName.get(cacheKey);
+            if (cached) posterUrl = cached;
+          } else {
+            tmdbProcessed++;
+            try {
+              const year = extractYearFromTitle(item.name);
+              const found = await tmdbService.searchMovie(clean, year);
+              if (found) {
+                const details = await tmdbService.getMovieDetails(found.id);
+                const props = details ? tmdbService.convertMovieToXUIProperties(details, clean) : tmdbService.convertMovieToXUIProperties(found as any, clean);
+                const best = (props?.movie_image || props?.cover_big || '').trim();
+                tmdbMoviePosterByName.set(cacheKey, best || null);
+                if (best) posterUrl = best;
+              } else {
+                tmdbMoviePosterByName.set(cacheKey, null);
+              }
+            } catch {
+              tmdbMoviePosterByName.set(cacheKey, null);
+            }
+          }
+        }
         let vodId: string | null = null;
         if (mode === 'update') {
           try {
@@ -578,7 +630,7 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
                 ownerId,
                 name: item.name,
                 streamUrl: item.url,
-                posterUrl: item.logo || null,
+                posterUrl,
                 isActive: true,
               },
               select: { id: true },
@@ -596,7 +648,7 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
             if (!existing) throw e;
             const updated = await prisma.coreVodItem.update({
               where: { id: existing.id },
-              data: { streamUrl: item.url, posterUrl: item.logo || null, isActive: true },
+              data: { streamUrl: item.url, posterUrl, isActive: true },
               select: { id: true },
             });
             vodUpdated++;
@@ -608,7 +660,7 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
               ownerId,
               name: item.name,
               streamUrl: item.url,
-              posterUrl: item.logo || null,
+              posterUrl,
               isActive: true,
             },
             select: { id: true },
@@ -635,6 +687,32 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
       const season = parsedEpisode?.season || 1;
       const episode = parsedEpisode?.episode || 1;
       const title = parsedEpisode?.title || item.name;
+      let coverUrl = item.logo || null;
+      if (tmdbService && tmdbProcessed < tmdbMaxItems) {
+        const clean = cleanTitleForTMDB(seriesName);
+        const cacheKey = clean.toLowerCase();
+        if (tmdbSeriesCoverByName.has(cacheKey)) {
+          const cached = tmdbSeriesCoverByName.get(cacheKey);
+          if (cached) coverUrl = cached;
+        } else {
+          tmdbProcessed++;
+          try {
+            const year = extractYearFromTitle(seriesName);
+            const found = await tmdbService.searchTV(clean, year);
+            if (found) {
+              const details = await tmdbService.getTVDetails(found.id);
+              const props = details ? tmdbService.convertTVToXUIProperties(details, clean) : tmdbService.convertTVToXUIProperties(found as any, clean);
+              const best = (props?.cover_big || props?.movie_image || '').trim();
+              tmdbSeriesCoverByName.set(cacheKey, best || null);
+              if (best) coverUrl = best;
+            } else {
+              tmdbSeriesCoverByName.set(cacheKey, null);
+            }
+          } catch {
+            tmdbSeriesCoverByName.set(cacheKey, null);
+          }
+        }
+      }
 
       let seriesRow = await prisma.coreSeries.findFirst({
         where: { ownerId, name: seriesName },
@@ -643,7 +721,7 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
       if (!seriesRow) {
         try {
           seriesRow = await prisma.coreSeries.create({
-            data: { ownerId, name: seriesName, coverUrl: item.logo || null, isActive: true },
+            data: { ownerId, name: seriesName, coverUrl, isActive: true },
             select: { id: true },
           });
           seriesCreated++;
@@ -657,7 +735,7 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
         try {
           await prisma.coreSeries.update({
             where: { id: seriesRow.id },
-            data: { coverUrl: item.logo || null, isActive: true },
+            data: { coverUrl, isActive: true },
           });
           seriesUpdated++;
         } catch {}

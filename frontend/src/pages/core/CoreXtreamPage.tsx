@@ -745,6 +745,7 @@ export function CoreXtreamPage() {
     linePassword: '',
     lineExpiresDays: 30,
     background: true,
+    enrichWithTMDB: true,
   });
 
   const [scheduleForm, setScheduleForm] = useState({
@@ -1812,6 +1813,7 @@ export function CoreXtreamPage() {
         linePassword: importForm.linePassword,
         lineExpiresDays: importForm.lineExpiresDays,
         background: importForm.background,
+        enrichWithTMDB: importForm.enrichWithTMDB,
       };
       const res = await api.post('/core/import/m3u', payload);
       return res.data;
@@ -5472,6 +5474,15 @@ export function CoreXtreamPage() {
               onChange={(e) => setImportForm((p) => ({ ...p, background: e.target.checked }))}
             />
             <span className="text-sm text-zinc-800 dark:text-zinc-200">Rodar em segundo plano (continua mesmo se fechar a página)</span>
+          </label>
+
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={importForm.enrichWithTMDB}
+              onChange={(e) => setImportForm((p) => ({ ...p, enrichWithTMDB: e.target.checked }))}
+            />
+            <span className="text-sm text-zinc-800 dark:text-zinc-200">Usar TMDB para capas (VOD e Séries)</span>
           </label>
 
           <div className="flex justify-end gap-2">
