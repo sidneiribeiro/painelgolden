@@ -562,8 +562,8 @@ export function CoreXtreamPage() {
 
   useEffect(() => {
     const next = parseTabFromSearch(location.search);
-    if (next !== tab) setTab(next);
-  }, [location.search, tab]);
+    setTab((prev) => (prev === next ? prev : next));
+  }, [location.search]);
 
   const { data: billingInfoData } = useQuery<{ data: { isBlocked: boolean; dueDate?: string | null; totalToPay?: number; activeCustomers?: number } }>({
     queryKey: ['billing-info'],
