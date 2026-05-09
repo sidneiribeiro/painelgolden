@@ -224,9 +224,14 @@ const edgeServerSchema = z.object({
 });
 
 const bouquetSchema = z.object({
+  kind: z.enum(['LIVE', 'MOVIE', 'SERIES']).optional(),
   name: z.string().min(1),
   isActive: z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true' || v === undefined).optional(),
   streamIds: z.array(z.string().uuid()).optional(),
+});
+
+const resetCoreSchema = z.object({
+  confirm: z.literal('ZERAR_TUDO'),
 });
 
 const packageSchema = z.object({
@@ -609,21 +614,36 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
     }
   }
 
-  const groupNames = Array.from(new Set(items.map(i => (i.group || 'Sem categoria').trim() || 'Sem categoria')));
+  const kindByItemType = (t: string) => {
+    if (t === 'live') return 'LIVE';
+    if (t === 'movie') return 'MOVIE';
+    return 'SERIES';
+  };
+  const normGroup = (g: any) => (String(g || 'Sem categoria').trim() || 'Sem categoria');
+  const bouquetKey = (kind: string, name: string) => `${kind}::${name}`;
+
+  const uniquePairs = new Map<string, { kind: 'LIVE' | 'MOVIE' | 'SERIES'; name: string }>();
+  for (const it of items) {
+    const kind = kindByItemType(it.type) as any;
+    const name = normGroup(it.group);
+    uniquePairs.set(bouquetKey(kind, name), { kind, name });
+  }
+  const pairs = Array.from(uniquePairs.values());
+
   const existingBouquets = await prisma.coreBouquet.findMany({
-    where: { ownerId, name: { in: groupNames } },
-    select: { id: true, name: true },
+    where: { ownerId, OR: pairs.map((p) => ({ kind: p.kind, name: p.name })) },
+    select: { id: true, name: true, kind: true },
   });
-  const bouquetByName = new Map(existingBouquets.map(b => [b.name, b.id] as const));
+  const bouquetByKey = new Map(existingBouquets.map((b) => [bouquetKey(String((b as any).kind), b.name), b.id] as const));
 
   let bouquetsCreated = 0;
-  for (const name of groupNames) {
-    if (bouquetByName.has(name)) continue;
+  for (const p of pairs) {
+    if (bouquetByKey.has(bouquetKey(p.kind, p.name))) continue;
     const b = await prisma.coreBouquet.create({
-      data: { ownerId, name, isActive: true },
-      select: { id: true },
+      data: { ownerId, kind: p.kind, name: p.name, isActive: true },
+      select: { id: true, kind: true, name: true },
     });
-    bouquetByName.set(name, b.id);
+    bouquetByKey.set(bouquetKey(String((b as any).kind), b.name), b.id);
     bouquetsCreated++;
   }
   try {
@@ -642,9 +662,9 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
 
   const allOwnedBouquets = await prisma.coreBouquet.findMany({
     where: { ownerId },
-    select: { id: true, name: true },
+    select: { id: true, name: true, kind: true },
   });
-  const ownedBouquetNames = new Set(allOwnedBouquets.map(b => b.name));
+  const ownedBouquetKeys = new Set(allOwnedBouquets.map((b) => bouquetKey(String((b as any).kind), b.name)));
 
   let processedItems = 0;
   const progressBase = 10;
@@ -662,14 +682,16 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
   };
 
   for (const item of items) {
-    const group = (item.group || 'Sem categoria').trim() || 'Sem categoria';
-    if (!ownedBouquetNames.has(group)) {
+    const kind = kindByItemType(item.type) as any;
+    const group = normGroup(item.group);
+    const key = bouquetKey(kind, group);
+    if (!ownedBouquetKeys.has(key)) {
       skipped++;
       processedItems++;
       if (processedItems % 25 === 0 || processedItems === totalItems) emitProgress(item.name);
       continue;
     }
-    const bouquetId = bouquetByName.get(group)!;
+    const bouquetId = bouquetByKey.get(key)!;
 
     if (item.type === 'live') {
       try {
@@ -937,7 +959,9 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
     }
   }
 
-  const importedBouquetIds = groupNames.map((n) => bouquetByName.get(n)!).filter(Boolean);
+  const importedBouquetIds = Array.from(
+    new Set(pairs.map((p) => bouquetByKey.get(bouquetKey(p.kind, p.name))!).filter(Boolean))
+  );
 
   let createdPackage: { id: string; name: string } | null = null;
   if (createPackage) {
@@ -2560,15 +2584,21 @@ export const createBouquet = asyncHandler(async (req: Request, res: Response) =>
   const currentUser = req.user!;
   const data = bouquetSchema.parse(req.body);
 
+  const kind = (data as any).kind || 'LIVE';
+  if (kind !== 'LIVE' && data.streamIds?.length) {
+    throw new AppError(400, 'Categorias de Filmes/Séries não aceitam streamIds');
+  }
+
   const bouquet = await prisma.coreBouquet.create({
     data: {
       ownerId: currentUser.userId,
+      kind,
       name: data.name,
       isActive: data.isActive ?? true,
     },
   });
 
-  if (data.streamIds?.length) {
+  if (kind === 'LIVE' && data.streamIds?.length) {
     const streamsCount = await prisma.coreStream.count({
       where: { id: { in: data.streamIds }, ...coreOwnerWhere(currentUser) },
     });
@@ -2589,20 +2619,26 @@ export const updateBouquet = asyncHandler(async (req: Request, res: Response) =>
   });
   if (!bouquet) throw new AppError(404, 'Bouquet não encontrado');
 
+  const nextKind = (data as any).kind === undefined ? bouquet.kind : (data as any).kind;
+  if (nextKind !== 'LIVE' && (data as any).streamIds?.length) {
+    throw new AppError(400, 'Categorias de Filmes/Séries não aceitam streamIds');
+  }
+
   const updated = await prisma.coreBouquet.update({
     where: { id },
     data: {
+      kind: (data as any).kind ?? undefined,
       name: data.name ?? undefined,
       isActive: data.isActive ?? undefined,
     },
   });
 
-  if (data.streamIds) {
+  if (nextKind === 'LIVE' && (data as any).streamIds) {
     const streamsCount = await prisma.coreStream.count({
-      where: { id: { in: data.streamIds }, ...coreOwnerWhere(currentUser) },
+      where: { id: { in: (data as any).streamIds }, ...coreOwnerWhere(currentUser) },
     });
-    if (streamsCount !== data.streamIds.length) throw new AppError(404, 'Uma ou mais streams não existem');
-    await syncBouquetStreams(id, data.streamIds);
+    if (streamsCount !== (data as any).streamIds.length) throw new AppError(404, 'Uma ou mais streams não existem');
+    await syncBouquetStreams(id, (data as any).streamIds);
   }
 
   res.json({ data: updated });
@@ -2621,7 +2657,38 @@ export const removeBouquet = asyncHandler(async (req: Request, res: Response) =>
   if (packagesUsing > 0) throw new AppError(400, 'Bouquet está vinculado a um ou mais pacotes');
 
   await prisma.coreBouquetStream.deleteMany({ where: { bouquetId: id } });
+  await prisma.coreBouquetVodItem.deleteMany({ where: { bouquetId: id } });
+  await prisma.coreBouquetSeries.deleteMany({ where: { bouquetId: id } });
   await prisma.coreBouquet.delete({ where: { id } });
+
+  res.json({ ok: true });
+});
+
+export const resetCoreAll = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  resetCoreSchema.parse(req.body);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.coreBouquetStream.deleteMany({ where: { bouquet: { ownerId: currentUser.userId } } });
+    await tx.coreBouquetVodItem.deleteMany({ where: { bouquet: { ownerId: currentUser.userId } } });
+    await tx.coreBouquetSeries.deleteMany({ where: { bouquet: { ownerId: currentUser.userId } } });
+
+    await tx.coreSeriesEpisode.deleteMany({ where: { series: { ownerId: currentUser.userId } } });
+    await tx.coreSeries.deleteMany({ where: { ownerId: currentUser.userId } });
+    await tx.coreVodItem.deleteMany({ where: { ownerId: currentUser.userId } });
+
+    await (tx as any).coreStreamEdgeServer.deleteMany({ where: { stream: { ownerId: currentUser.userId } } });
+    await tx.coreStream.deleteMany({ where: { ownerId: currentUser.userId } });
+
+    await tx.corePayment.deleteMany({ where: { ownerId: currentUser.userId } });
+    await tx.corePlaybackSession.deleteMany({ where: { line: { ownerId: currentUser.userId } } });
+    await tx.coreLine.deleteMany({ where: { ownerId: currentUser.userId } });
+    await tx.corePackageBouquet.deleteMany({ where: { package: { ownerId: currentUser.userId } } });
+    await tx.corePackage.deleteMany({ where: { ownerId: currentUser.userId } });
+
+    await tx.coreM3USchedule.deleteMany({ where: { ownerId: currentUser.userId } });
+    await tx.coreBouquet.deleteMany({ where: { ownerId: currentUser.userId } });
+  });
 
   res.json({ ok: true });
 });

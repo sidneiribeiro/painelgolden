@@ -27,6 +27,7 @@ import {
   createBouquet,
   updateBouquet,
   removeBouquet,
+  resetCoreAll,
   listPackages,
   createPackage,
   updatePackage,
@@ -118,6 +119,7 @@ router.get('/bouquets', listBouquets);
 router.post('/bouquets', requireBillingValid, createBouquet);
 router.put('/bouquets/:id', requireBillingValid, updateBouquet);
 router.delete('/bouquets/:id', requireBillingValid, removeBouquet);
+router.post('/reset', requireRole('SUPER_ADMIN', 'ADMIN'), requireBillingValid, resetCoreAll);
 
 router.get('/packages', listPackages);
 router.post('/packages', requireBillingValid, createPackage);

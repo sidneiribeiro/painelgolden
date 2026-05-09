@@ -55,9 +55,10 @@ interface DashboardData {
 
 type CoreBouquet = {
   id: string;
+  kind: 'LIVE' | 'MOVIE' | 'SERIES';
   name: string;
   isActive: boolean;
-  _count?: { streams: number };
+  _count?: { streams?: number; vodItems?: number; series?: number };
 };
 
 type CoreEdgeServersMetricsResponse = {
