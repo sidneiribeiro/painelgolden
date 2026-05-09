@@ -87,6 +87,18 @@ type CoreBouquet = {
   _count?: { streams?: number; vodItems?: number; series?: number };
 };
 
+type CoreM3UPreview = {
+  url: string;
+  type: 'all' | 'live' | 'movie' | 'series' | 'vod';
+  stats: { total: number; live: number; movies: number; series: number };
+  categories: Array<{ key: string; kind: 'LIVE' | 'MOVIE' | 'SERIES'; name: string; count: number; isAdult: boolean }>;
+  sample: {
+    live: Array<{ name: string; url: string; group?: string; logo?: string; tvgId?: string; tvgName?: string; type: 'live' }>;
+    movie: Array<{ name: string; url: string; group?: string; logo?: string; tvgId?: string; tvgName?: string; type: 'movie' }>;
+    series: Array<{ name: string; url: string; group?: string; logo?: string; tvgId?: string; tvgName?: string; type: 'series' }>;
+  };
+};
+
 type CorePackage = {
   id: string;
   name: string;
@@ -668,6 +680,9 @@ export function CoreXtreamPage() {
       background: true,
       enrichWithTMDB: true,
     });
+    setM3uPreview(null);
+    setM3uPreviewSelectedKeys([]);
+    setM3uPreviewSearch('');
     setImportModalOpen(true);
   };
 
@@ -865,6 +880,9 @@ export function CoreXtreamPage() {
     background: true,
     enrichWithTMDB: true,
   });
+  const [m3uPreview, setM3uPreview] = useState<CoreM3UPreview | null>(null);
+  const [m3uPreviewSelectedKeys, setM3uPreviewSelectedKeys] = useState<string[]>([]);
+  const [m3uPreviewSearch, setM3uPreviewSearch] = useState('');
 
   const [scheduleForm, setScheduleForm] = useState({
     name: '',
@@ -2298,6 +2316,7 @@ export function CoreXtreamPage() {
         url: normalizeM3UUrlInput(importForm.url),
         mode: importForm.mode,
         type: importForm.type,
+        includeCategories: m3uPreviewSelectedKeys.length ? m3uPreviewSelectedKeys : undefined,
         createPackage: importForm.createPackage,
         packageName: importForm.createPackage ? importForm.packageName : undefined,
         createLine: importForm.createLine,
@@ -2340,6 +2359,26 @@ export function CoreXtreamPage() {
       } else {
         toast.error(msg);
       }
+    },
+  });
+
+  const previewM3UMutation = useMutation({
+    mutationFn: async () => {
+      const payload: any = {
+        url: normalizeM3UUrlInput(importForm.url),
+        type: importForm.type,
+        sampleLimit: 25,
+      };
+      const res = await api.post('/core/import/m3u/preview', payload);
+      return res.data?.data as CoreM3UPreview;
+    },
+    onSuccess: (data) => {
+      setM3uPreview(data);
+      setM3uPreviewSelectedKeys((data?.categories || []).map((c) => c.key));
+      toast.success('Prévia carregada');
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao gerar prévia');
     },
   });
 
@@ -6531,7 +6570,12 @@ export function CoreXtreamPage() {
             <Select
               label="Tipo"
               value={importForm.type}
-              onChange={(e) => setImportForm((p) => ({ ...p, type: e.target.value as any }))}
+              onChange={(e) => {
+                setImportForm((p) => ({ ...p, type: e.target.value as any }));
+                setM3uPreview(null);
+                setM3uPreviewSelectedKeys([]);
+                setM3uPreviewSearch('');
+              }}
             >
               <option value="all">Tudo</option>
               <option value="live">Live</option>
@@ -6610,6 +6654,117 @@ export function CoreXtreamPage() {
             <span className="text-sm text-zinc-800 dark:text-zinc-200">Usar TMDB para capas (Filmes e Séries)</span>
           </label>
 
+          <div className="rounded-lg border border-zinc-200/60 dark:border-zinc-800 p-3 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Prévia</div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={isBillingBlocked || !importForm.url || previewM3UMutation.isPending}
+                  onClick={() => {
+                    if (!importForm.url) {
+                      toast.error('Preencha a URL');
+                      return;
+                    }
+                    previewM3UMutation.mutate();
+                  }}
+                >
+                  Gerar prévia
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!m3uPreview}
+                  onClick={() => {
+                    if (!m3uPreview) return;
+                    const blob = new Blob([JSON.stringify({ ...m3uPreview, selected: m3uPreviewSelectedKeys }, null, 2)], {
+                      type: 'application/json;charset=utf-8',
+                    });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = `m3u-preview-${Date.now()}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    setTimeout(() => URL.revokeObjectURL(a.href), 500);
+                  }}
+                >
+                  Baixar JSON
+                </Button>
+              </div>
+            </div>
+
+            {m3uPreview ? (
+              <div className="space-y-3">
+                <div className="text-xs text-zinc-600 dark:text-zinc-400">
+                  Itens: {m3uPreview.stats.total} (Live {m3uPreview.stats.live} • Filmes {m3uPreview.stats.movies} • Séries {m3uPreview.stats.series})
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <Input
+                    label="Filtrar categorias"
+                    value={m3uPreviewSearch}
+                    onChange={(e) => setM3uPreviewSearch(e.target.value)}
+                  />
+                  <div className="flex items-end justify-end gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setM3uPreviewSelectedKeys((m3uPreview.categories || []).map((c) => c.key))}
+                    >
+                      Selecionar tudo
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setM3uPreviewSelectedKeys([])}
+                    >
+                      Limpar
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="max-h-56 overflow-auto rounded border border-zinc-200/60 dark:border-zinc-800">
+                  <div className="divide-y divide-zinc-200/60 dark:divide-zinc-800">
+                    {(m3uPreview.categories || [])
+                      .filter((c) => {
+                        const q = (m3uPreviewSearch || '').trim().toLowerCase();
+                        if (!q) return true;
+                        return `${c.kind} ${c.name}`.toLowerCase().includes(q);
+                      })
+                      .map((c) => {
+                        const checked = m3uPreviewSelectedKeys.includes(c.key);
+                        return (
+                          <label key={c.key} className="flex items-center gap-2 px-3 py-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) => {
+                                const next = e.target.checked;
+                                setM3uPreviewSelectedKeys((prev) => {
+                                  if (next) return prev.includes(c.key) ? prev : [...prev, c.key];
+                                  return prev.filter((k) => k !== c.key);
+                                });
+                              }}
+                            />
+                            <div className="flex-1 text-sm text-zinc-800 dark:text-zinc-200 truncate">
+                              {c.kind} • {c.name}
+                            </div>
+                            <div className="text-xs text-zinc-500 dark:text-zinc-400">{c.count}</div>
+                          </label>
+                        );
+                      })}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                Gere a prévia para ver as categorias e marcar o que importar/atualizar.
+              </div>
+            )}
+          </div>
+
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setImportModalOpen(false)}>Cancelar</Button>
             <Button
@@ -6617,6 +6772,10 @@ export function CoreXtreamPage() {
               onClick={() => {
                 if (!importForm.url) {
                   toast.error('Preencha a URL');
+                  return;
+                }
+                if (m3uPreview && m3uPreviewSelectedKeys.length === 0) {
+                  toast.error('Selecione pelo menos 1 categoria para importar');
                   return;
                 }
                 if (importForm.mode === 'replace') {

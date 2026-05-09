@@ -69,6 +69,7 @@ import {
   updateSeriesEpisode,
   removeSeriesEpisode,
   importM3U,
+  previewM3U,
   getM3UImportJob,
   listM3USchedules,
   createM3USchedule,
@@ -168,6 +169,7 @@ router.put('/series/episodes/:id', requireBillingValid, updateSeriesEpisode);
 router.delete('/series/episodes/:id', requireBillingValid, removeSeriesEpisode);
 
 router.post('/import/m3u', requireBillingValid, importM3U);
+router.post('/import/m3u/preview', requireBillingValid, previewM3U);
 router.get('/import/m3u/jobs/:jobId', requireBillingValid, getM3UImportJob);
 
 router.get('/schedules', listM3USchedules);

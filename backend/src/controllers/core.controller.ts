@@ -293,6 +293,7 @@ const importM3USchema = z.object({
     ),
   mode: z.enum(['append', 'replace', 'update']).optional(),
   type: z.enum(['all', 'live', 'movie', 'series', 'vod']).optional(),
+  includeCategories: z.array(z.string().min(1)).optional(),
   createPackage: z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true').optional(),
   packageName: z.string().min(1).optional(),
   createLine: z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true').optional(),
@@ -301,6 +302,26 @@ const importM3USchema = z.object({
   lineExpiresDays: z.union([z.number(), z.string()]).transform(v => toInt(v, 30)).optional(),
   background: z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true').optional(),
   enrichWithTMDB: z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true').optional(),
+});
+
+const previewM3USchema = z.object({
+  url: z
+    .string()
+    .min(1)
+    .transform(normalizeM3UUrlInput)
+    .refine(
+      (v) => {
+        try {
+          new URL(v);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      { message: 'URL do M3U inválida. Se a senha tiver "?" use %3F (ex: password=abc%3F123).' },
+    ),
+  type: z.enum(['all', 'live', 'movie', 'series', 'vod']).optional(),
+  sampleLimit: z.union([z.number(), z.string()]).transform(v => toInt(v, 25)).optional(),
 });
 
 const m3uScheduleSchema = z.object({
@@ -539,6 +560,7 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
     url,
     mode = 'append',
     type = 'all',
+    includeCategories,
     createPackage = false,
     packageName,
     createLine = false,
@@ -560,13 +582,27 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
   } catch {}
   const parsed = await parser.parseFromUrl(url, 120000);
 
+  const kindByItemType = (t: string) => {
+    if (t === 'live') return 'LIVE';
+    if (t === 'movie') return 'MOVIE';
+    return 'SERIES';
+  };
+  const normGroup = (g: any) => (String(g || 'Sem categoria').trim() || 'Sem categoria');
+  const bouquetKey = (kind: string, name: string) => `${kind}::${name}`;
+  const includeKeys = includeCategories?.length ? new Set(includeCategories.map((s) => String(s))) : null;
+
   const wantedTypes = (() => {
     if (type === 'all') return new Set(['live', 'movie', 'series']);
     if (type === 'vod') return new Set(['movie', 'series']);
     return new Set([type]);
   })();
 
-  const items = parsed.items.filter(i => wantedTypes.has(i.type));
+  const items = parsed.items.filter((i) => {
+    if (!wantedTypes.has(i.type)) return false;
+    if (!includeKeys) return true;
+    const key = bouquetKey(kindByItemType(i.type), normGroup(i.group));
+    return includeKeys.has(key);
+  });
   const totalItems = items.length;
   try {
     onProgress?.({
@@ -613,14 +649,6 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
       await prisma.coreSeries.deleteMany({ where: { ownerId } });
     }
   }
-
-  const kindByItemType = (t: string) => {
-    if (t === 'live') return 'LIVE';
-    if (t === 'movie') return 'MOVIE';
-    return 'SERIES';
-  };
-  const normGroup = (g: any) => (String(g || 'Sem categoria').trim() || 'Sem categoria');
-  const bouquetKey = (kind: string, name: string) => `${kind}::${name}`;
 
   const uniquePairs = new Map<string, { kind: 'LIVE' | 'MOVIE' | 'SERIES'; name: string }>();
   for (const it of items) {
@@ -4697,6 +4725,75 @@ export const importM3U = asyncHandler(async (req: Request, res: Response) => {
   }
   const result = await runCoreM3UImport(currentUser.userId, input);
   res.json(result);
+});
+
+export const previewM3U = asyncHandler(async (req: Request, res: Response) => {
+  const input = previewM3USchema.parse(req.body);
+  const { url, type = 'all', sampleLimit = 25 } = input;
+
+  const parser = new M3UParser();
+  const parsed = await parser.parseFromUrl(url, 120000);
+
+  const wantedTypes = (() => {
+    if (type === 'all') return new Set(['live', 'movie', 'series']);
+    if (type === 'vod') return new Set(['movie', 'series']);
+    return new Set([type]);
+  })();
+
+  const kindByItemType = (t: string) => {
+    if (t === 'live') return 'LIVE';
+    if (t === 'movie') return 'MOVIE';
+    return 'SERIES';
+  };
+  const normGroup = (g: any) => (String(g || 'Sem categoria').trim() || 'Sem categoria');
+  const keyOf = (kind: string, name: string) => `${kind}::${name}`;
+
+  const filtered = parsed.items.filter((i) => wantedTypes.has(i.type));
+
+  const catMap = new Map<string, { kind: 'LIVE' | 'MOVIE' | 'SERIES'; name: string; count: number; isAdult: boolean }>();
+  for (const it of filtered) {
+    const kind = kindByItemType(it.type) as any;
+    const name = normGroup(it.group);
+    const key = keyOf(kind, name);
+    const existing = catMap.get(key);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      catMap.set(key, { kind, name, count: 1, isAdult: isAdultCategoryName(name) });
+    }
+  }
+
+  const categories = Array.from(catMap.entries())
+    .map(([key, v]) => ({ key, kind: v.kind, name: v.name, count: v.count, isAdult: v.isAdult }))
+    .sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind.localeCompare(b.kind)));
+
+  const sample = {
+    live: [] as any[],
+    movie: [] as any[],
+    series: [] as any[],
+  };
+  for (const it of filtered) {
+    const bucket = it.type;
+    if (bucket === 'live' && sample.live.length < sampleLimit) sample.live.push(it);
+    else if (bucket === 'movie' && sample.movie.length < sampleLimit) sample.movie.push(it);
+    else if (bucket === 'series' && sample.series.length < sampleLimit) sample.series.push(it);
+    if (sample.live.length >= sampleLimit && sample.movie.length >= sampleLimit && sample.series.length >= sampleLimit) break;
+  }
+
+  res.json({
+    data: {
+      url,
+      type,
+      stats: {
+        total: filtered.length,
+        live: filtered.filter((i) => i.type === 'live').length,
+        movies: filtered.filter((i) => i.type === 'movie').length,
+        series: filtered.filter((i) => i.type === 'series').length,
+      },
+      categories,
+      sample,
+    },
+  });
 });
 
 const coreM3UScheduleTasks = new Map<string, cron.ScheduledTask>();
