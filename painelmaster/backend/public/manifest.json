@@ -1,0 +1,44 @@
+{
+  "name": "Painel IPTV Master",
+  "short_name": "PainelMaster",
+  "description": "Painel de gerenciamento IPTV completo e profissional",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#18181b",
+  "theme_color": "#0ea5e9",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "productivity", "utilities"],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Novo Cliente",
+      "short_name": "Novo Cliente",
+      "description": "Criar novo cliente",
+      "url": "/customers?action=create",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Dashboard",
+      "short_name": "Dashboard",
+      "description": "Ver dashboard",
+      "url": "/",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
+

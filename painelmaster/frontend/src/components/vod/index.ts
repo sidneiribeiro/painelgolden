@@ -1,0 +1,2 @@
+export { VODMetadataModal } from './VODMetadataModal';
+
