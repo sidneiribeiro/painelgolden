@@ -1501,12 +1501,14 @@ export const bulkApplyEdgeServersToStreams = asyncHandler(async (req: Request, r
 
 export const bulkUpdateCoreStreams = asyncHandler(async (req: Request, res: Response) => {
   const currentUser = req.user!;
-  const { streamIds, isActive, tvArchive, tvArchiveDuration } = z
+  const { streamIds, isActive, tvArchive, tvArchiveDuration, moveToBouquetId, ensureInPackageId } = z
     .object({
       streamIds: z.array(z.string().uuid()).min(1).max(500),
       isActive: z.boolean().optional(),
       tvArchive: z.boolean().optional(),
       tvArchiveDuration: z.number().int().min(0).max(3650).optional(),
+      moveToBouquetId: z.string().uuid().optional(),
+      ensureInPackageId: z.string().uuid().optional(),
     })
     .parse(req.body);
 
@@ -1515,14 +1517,76 @@ export const bulkUpdateCoreStreams = asyncHandler(async (req: Request, res: Resp
   if (tvArchive !== undefined) data.tvArchive = tvArchive;
   if (tvArchiveDuration !== undefined) data.tvArchiveDuration = tvArchiveDuration;
 
-  if (!Object.keys(data).length) throw new AppError(400, 'Nenhum campo para atualizar');
+  if (!Object.keys(data).length && !moveToBouquetId && !ensureInPackageId) {
+    throw new AppError(400, 'Nenhum campo para atualizar');
+  }
 
-  const result = await prisma.coreStream.updateMany({
+  const ownedStreams = await prisma.coreStream.findMany({
     where: { id: { in: streamIds }, ...coreOwnerWhere(currentUser) },
-    data,
+    select: { id: true },
+  });
+  if (ownedStreams.length !== streamIds.length) throw new AppError(403, 'Uma ou mais streams não pertencem ao usuário');
+  const ownedIds = ownedStreams.map((s) => s.id);
+
+  const result = await prisma.$transaction(async (tx) => {
+    let updated = 0;
+    let moved = 0;
+    let ensuredTotal = 0;
+    let ensuredAdded = 0;
+
+    if (Object.keys(data).length) {
+      const r = await tx.coreStream.updateMany({ where: { id: { in: ownedIds } }, data });
+      updated = r.count;
+    }
+
+    let ensureBouquetIds: string[] = [];
+    if (moveToBouquetId) {
+      const bouquet = await tx.coreBouquet.findFirst({
+        where: { id: moveToBouquetId, ownerId: currentUser.userId, kind: 'LIVE' as any },
+        select: { id: true },
+      });
+      if (!bouquet) throw new AppError(404, 'Categoria não encontrada');
+
+      await tx.coreBouquetStream.deleteMany({
+        where: { streamId: { in: ownedIds }, bouquet: { ownerId: currentUser.userId, kind: 'LIVE' as any } },
+      });
+      await tx.coreBouquetStream.createMany({
+        data: ownedIds.map((streamId) => ({ bouquetId: moveToBouquetId, streamId })),
+        skipDuplicates: true,
+      });
+      moved = ownedIds.length;
+      ensureBouquetIds = [moveToBouquetId];
+    }
+
+    if (ensureInPackageId) {
+      const pkg = await tx.corePackage.findFirst({
+        where: { id: ensureInPackageId, ownerId: currentUser.userId },
+        select: { id: true },
+      });
+      if (!pkg) throw new AppError(404, 'Pacote não encontrado');
+
+      if (!ensureBouquetIds.length) {
+        const links = await tx.coreBouquetStream.findMany({
+          where: { streamId: { in: ownedIds }, bouquet: { ownerId: currentUser.userId, kind: 'LIVE' as any } },
+          select: { bouquetId: true },
+        });
+        ensureBouquetIds = Array.from(new Set(links.map((l) => l.bouquetId)));
+      }
+
+      ensuredTotal = ensureBouquetIds.length;
+      if (ensureBouquetIds.length) {
+        const created = await tx.corePackageBouquet.createMany({
+          data: ensureBouquetIds.map((bouquetId) => ({ packageId: ensureInPackageId, bouquetId })),
+          skipDuplicates: true,
+        });
+        ensuredAdded = created.count;
+      }
+    }
+
+    return { updated, moved, ensuredTotal, ensuredAdded };
   });
 
-  res.json({ ok: true, updated: result.count });
+  res.json({ ok: true, ...result });
 });
 
 export const bulkDeleteCoreStreams = asyncHandler(async (req: Request, res: Response) => {
@@ -4368,23 +4432,87 @@ export const removeVod = asyncHandler(async (req: Request, res: Response) => {
 
 export const bulkUpdateCoreVod = asyncHandler(async (req: Request, res: Response) => {
   const currentUser = req.user!;
-  const { vodIds, isActive } = z
+  const { vodIds, isActive, moveToBouquetId, ensureInPackageId } = z
     .object({
       vodIds: z.array(z.string().uuid()).min(1).max(500),
       isActive: z.boolean().optional(),
+      moveToBouquetId: z.string().uuid().optional(),
+      ensureInPackageId: z.string().uuid().optional(),
     })
     .parse(req.body);
 
   const data: any = {};
   if (isActive !== undefined) data.isActive = isActive;
-  if (!Object.keys(data).length) throw new AppError(400, 'Nenhum campo para atualizar');
+  if (!Object.keys(data).length && !moveToBouquetId && !ensureInPackageId) {
+    throw new AppError(400, 'Nenhum campo para atualizar');
+  }
 
-  const result = await prisma.coreVodItem.updateMany({
+  const ownedVod = await prisma.coreVodItem.findMany({
     where: { id: { in: vodIds }, ...coreOwnerWhere(currentUser) },
-    data,
+    select: { id: true },
+  });
+  if (ownedVod.length !== vodIds.length) throw new AppError(403, 'Um ou mais filmes não pertencem ao usuário');
+  const ownedIds = ownedVod.map((v) => v.id);
+
+  const result = await prisma.$transaction(async (tx) => {
+    let updated = 0;
+    let moved = 0;
+    let ensuredTotal = 0;
+    let ensuredAdded = 0;
+
+    if (Object.keys(data).length) {
+      const r = await tx.coreVodItem.updateMany({ where: { id: { in: ownedIds } }, data });
+      updated = r.count;
+    }
+
+    let ensureBouquetIds: string[] = [];
+    if (moveToBouquetId) {
+      const bouquet = await tx.coreBouquet.findFirst({
+        where: { id: moveToBouquetId, ownerId: currentUser.userId, kind: 'MOVIE' as any },
+        select: { id: true },
+      });
+      if (!bouquet) throw new AppError(404, 'Categoria não encontrada');
+
+      await tx.coreBouquetVodItem.deleteMany({
+        where: { vodItemId: { in: ownedIds }, bouquet: { ownerId: currentUser.userId, kind: 'MOVIE' as any } },
+      });
+      await tx.coreBouquetVodItem.createMany({
+        data: ownedIds.map((vodItemId) => ({ bouquetId: moveToBouquetId, vodItemId })),
+        skipDuplicates: true,
+      });
+      moved = ownedIds.length;
+      ensureBouquetIds = [moveToBouquetId];
+    }
+
+    if (ensureInPackageId) {
+      const pkg = await tx.corePackage.findFirst({
+        where: { id: ensureInPackageId, ownerId: currentUser.userId },
+        select: { id: true },
+      });
+      if (!pkg) throw new AppError(404, 'Pacote não encontrado');
+
+      if (!ensureBouquetIds.length) {
+        const links = await tx.coreBouquetVodItem.findMany({
+          where: { vodItemId: { in: ownedIds }, bouquet: { ownerId: currentUser.userId, kind: 'MOVIE' as any } },
+          select: { bouquetId: true },
+        });
+        ensureBouquetIds = Array.from(new Set(links.map((l) => l.bouquetId)));
+      }
+
+      ensuredTotal = ensureBouquetIds.length;
+      if (ensureBouquetIds.length) {
+        const created = await tx.corePackageBouquet.createMany({
+          data: ensureBouquetIds.map((bouquetId) => ({ packageId: ensureInPackageId, bouquetId })),
+          skipDuplicates: true,
+        });
+        ensuredAdded = created.count;
+      }
+    }
+
+    return { updated, moved, ensuredTotal, ensuredAdded };
   });
 
-  res.json({ ok: true, updated: result.count });
+  res.json({ ok: true, ...result });
 });
 
 export const bulkDeleteCoreVod = asyncHandler(async (req: Request, res: Response) => {
@@ -4472,23 +4600,87 @@ export const listSeries = asyncHandler(async (req: Request, res: Response) => {
 
 export const bulkUpdateCoreSeries = asyncHandler(async (req: Request, res: Response) => {
   const currentUser = req.user!;
-  const { seriesIds, isActive } = z
+  const { seriesIds, isActive, moveToBouquetId, ensureInPackageId } = z
     .object({
       seriesIds: z.array(z.string().uuid()).min(1).max(500),
       isActive: z.boolean().optional(),
+      moveToBouquetId: z.string().uuid().optional(),
+      ensureInPackageId: z.string().uuid().optional(),
     })
     .parse(req.body);
 
   const data: any = {};
   if (isActive !== undefined) data.isActive = isActive;
-  if (!Object.keys(data).length) throw new AppError(400, 'Nenhum campo para atualizar');
+  if (!Object.keys(data).length && !moveToBouquetId && !ensureInPackageId) {
+    throw new AppError(400, 'Nenhum campo para atualizar');
+  }
 
-  const result = await prisma.coreSeries.updateMany({
+  const ownedSeries = await prisma.coreSeries.findMany({
     where: { id: { in: seriesIds }, ...coreOwnerWhere(currentUser) },
-    data,
+    select: { id: true },
+  });
+  if (ownedSeries.length !== seriesIds.length) throw new AppError(403, 'Uma ou mais séries não pertencem ao usuário');
+  const ownedIds = ownedSeries.map((s) => s.id);
+
+  const result = await prisma.$transaction(async (tx) => {
+    let updated = 0;
+    let moved = 0;
+    let ensuredTotal = 0;
+    let ensuredAdded = 0;
+
+    if (Object.keys(data).length) {
+      const r = await tx.coreSeries.updateMany({ where: { id: { in: ownedIds } }, data });
+      updated = r.count;
+    }
+
+    let ensureBouquetIds: string[] = [];
+    if (moveToBouquetId) {
+      const bouquet = await tx.coreBouquet.findFirst({
+        where: { id: moveToBouquetId, ownerId: currentUser.userId, kind: 'SERIES' as any },
+        select: { id: true },
+      });
+      if (!bouquet) throw new AppError(404, 'Categoria não encontrada');
+
+      await tx.coreBouquetSeries.deleteMany({
+        where: { seriesId: { in: ownedIds }, bouquet: { ownerId: currentUser.userId, kind: 'SERIES' as any } },
+      });
+      await tx.coreBouquetSeries.createMany({
+        data: ownedIds.map((seriesId) => ({ bouquetId: moveToBouquetId, seriesId })),
+        skipDuplicates: true,
+      });
+      moved = ownedIds.length;
+      ensureBouquetIds = [moveToBouquetId];
+    }
+
+    if (ensureInPackageId) {
+      const pkg = await tx.corePackage.findFirst({
+        where: { id: ensureInPackageId, ownerId: currentUser.userId },
+        select: { id: true },
+      });
+      if (!pkg) throw new AppError(404, 'Pacote não encontrado');
+
+      if (!ensureBouquetIds.length) {
+        const links = await tx.coreBouquetSeries.findMany({
+          where: { seriesId: { in: ownedIds }, bouquet: { ownerId: currentUser.userId, kind: 'SERIES' as any } },
+          select: { bouquetId: true },
+        });
+        ensureBouquetIds = Array.from(new Set(links.map((l) => l.bouquetId)));
+      }
+
+      ensuredTotal = ensureBouquetIds.length;
+      if (ensureBouquetIds.length) {
+        const created = await tx.corePackageBouquet.createMany({
+          data: ensureBouquetIds.map((bouquetId) => ({ packageId: ensureInPackageId, bouquetId })),
+          skipDuplicates: true,
+        });
+        ensuredAdded = created.count;
+      }
+    }
+
+    return { updated, moved, ensuredTotal, ensuredAdded };
   });
 
-  res.json({ ok: true, updated: result.count });
+  res.json({ ok: true, ...result });
 });
 
 export const bulkDeleteCoreSeries = asyncHandler(async (req: Request, res: Response) => {

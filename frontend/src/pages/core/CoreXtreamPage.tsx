@@ -631,17 +631,23 @@ export function CoreXtreamPage() {
     status: 'keep' as 'keep' | 'active' | 'inactive',
     catchup: 'keep' as 'keep' | 'on' | 'off',
     catchupDays: '',
+    moveToBouquetId: '',
+    ensureInPackageId: '',
   });
 
   const [selectedVodIds, setSelectedVodIds] = useState<string[]>([]);
   const [bulkEditVodModalOpen, setBulkEditVodModalOpen] = useState(false);
   const [bulkDeleteVodModalOpen, setBulkDeleteVodModalOpen] = useState(false);
   const [bulkVodStatus, setBulkVodStatus] = useState<'keep' | 'active' | 'inactive'>('keep');
+  const [bulkVodMoveToBouquetId, setBulkVodMoveToBouquetId] = useState('');
+  const [bulkVodEnsureInPackageId, setBulkVodEnsureInPackageId] = useState('');
 
   const [selectedSeriesIds, setSelectedSeriesIds] = useState<string[]>([]);
   const [bulkEditSeriesModalOpen, setBulkEditSeriesModalOpen] = useState(false);
   const [bulkDeleteSeriesModalOpen, setBulkDeleteSeriesModalOpen] = useState(false);
   const [bulkSeriesStatus, setBulkSeriesStatus] = useState<'keep' | 'active' | 'inactive'>('keep');
+  const [bulkSeriesMoveToBouquetId, setBulkSeriesMoveToBouquetId] = useState('');
+  const [bulkSeriesEnsureInPackageId, setBulkSeriesEnsureInPackageId] = useState('');
 
   const perPageOptions = useMemo(() => [10, 20, 50, 100, 200, 500, 1000], []);
   const [streamsPage, setStreamsPage] = useState(1);
@@ -1632,7 +1638,7 @@ export function CoreXtreamPage() {
   });
 
   const bulkUpdateStreamsMutation = useMutation({
-    mutationFn: async (payload: { streamIds: string[]; isActive?: boolean; tvArchive?: boolean; tvArchiveDuration?: number }) => {
+    mutationFn: async (payload: { streamIds: string[]; isActive?: boolean; tvArchive?: boolean; tvArchiveDuration?: number; moveToBouquetId?: string; ensureInPackageId?: string }) => {
       const res = await api.put('/core/streams/bulk', payload);
       return res.data;
     },
@@ -2111,7 +2117,7 @@ export function CoreXtreamPage() {
   });
 
   const bulkUpdateVodMutation = useMutation({
-    mutationFn: async (payload: { vodIds: string[]; isActive?: boolean }) => {
+    mutationFn: async (payload: { vodIds: string[]; isActive?: boolean; moveToBouquetId?: string; ensureInPackageId?: string }) => {
       const res = await api.put('/core/vod/bulk', payload);
       return res.data;
     },
@@ -2222,7 +2228,7 @@ export function CoreXtreamPage() {
   });
 
   const bulkUpdateSeriesMutation = useMutation({
-    mutationFn: async (payload: { seriesIds: string[]; isActive?: boolean }) => {
+    mutationFn: async (payload: { seriesIds: string[]; isActive?: boolean; moveToBouquetId?: string; ensureInPackageId?: string }) => {
       const res = await api.put('/core/series/bulk', payload);
       return res.data;
     },
@@ -8019,6 +8025,26 @@ export function CoreXtreamPage() {
             value={bulkStreamForm.catchupDays}
             onChange={(e) => setBulkStreamForm((p) => ({ ...p, catchupDays: e.target.value }))}
           />
+          <Select
+            label="Mover para categoria"
+            value={bulkStreamForm.moveToBouquetId}
+            onChange={(e) => setBulkStreamForm((p) => ({ ...p, moveToBouquetId: e.target.value }))}
+          >
+            <option value="">Não mover</option>
+            {bouquetsForStreams.map((b) => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
+          </Select>
+          <Select
+            label="Garantir categoria no pacote"
+            value={bulkStreamForm.ensureInPackageId}
+            onChange={(e) => setBulkStreamForm((p) => ({ ...p, ensureInPackageId: e.target.value }))}
+          >
+            <option value="">Não mexer</option>
+            {packages.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </Select>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setBulkEditStreamsModalOpen(false)}>
               Cancelar
@@ -8041,7 +8067,16 @@ export function CoreXtreamPage() {
                   payload.tvArchiveDuration = 0;
                 }
 
-                if (payload.isActive === undefined && payload.tvArchive === undefined && payload.tvArchiveDuration === undefined) {
+                if (bulkStreamForm.moveToBouquetId) payload.moveToBouquetId = bulkStreamForm.moveToBouquetId;
+                if (bulkStreamForm.ensureInPackageId) payload.ensureInPackageId = bulkStreamForm.ensureInPackageId;
+
+                if (
+                  payload.isActive === undefined &&
+                  payload.tvArchive === undefined &&
+                  payload.tvArchiveDuration === undefined &&
+                  payload.moveToBouquetId === undefined &&
+                  payload.ensureInPackageId === undefined
+                ) {
                   toast.error('Selecione pelo menos 1 campo para alterar');
                   return;
                 }
@@ -8095,6 +8130,26 @@ export function CoreXtreamPage() {
             <option value="active">Ativar</option>
             <option value="inactive">Desativar</option>
           </Select>
+          <Select
+            label="Mover para categoria"
+            value={bulkVodMoveToBouquetId}
+            onChange={(e) => setBulkVodMoveToBouquetId(e.target.value)}
+          >
+            <option value="">Não mover</option>
+            {bouquetsForVod.map((b) => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
+          </Select>
+          <Select
+            label="Garantir categoria no pacote"
+            value={bulkVodEnsureInPackageId}
+            onChange={(e) => setBulkVodEnsureInPackageId(e.target.value)}
+          >
+            <option value="">Não mexer</option>
+            {packages.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </Select>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setBulkEditVodModalOpen(false)}>
               Cancelar
@@ -8106,7 +8161,9 @@ export function CoreXtreamPage() {
                 const payload: any = { vodIds: selectedVodIds };
                 if (bulkVodStatus === 'active') payload.isActive = true;
                 if (bulkVodStatus === 'inactive') payload.isActive = false;
-                if (payload.isActive === undefined) {
+                if (bulkVodMoveToBouquetId) payload.moveToBouquetId = bulkVodMoveToBouquetId;
+                if (bulkVodEnsureInPackageId) payload.ensureInPackageId = bulkVodEnsureInPackageId;
+                if (payload.isActive === undefined && payload.moveToBouquetId === undefined && payload.ensureInPackageId === undefined) {
                   toast.error('Selecione pelo menos 1 campo para alterar');
                   return;
                 }
@@ -8160,6 +8217,26 @@ export function CoreXtreamPage() {
             <option value="active">Ativar</option>
             <option value="inactive">Desativar</option>
           </Select>
+          <Select
+            label="Mover para categoria"
+            value={bulkSeriesMoveToBouquetId}
+            onChange={(e) => setBulkSeriesMoveToBouquetId(e.target.value)}
+          >
+            <option value="">Não mover</option>
+            {bouquetsForSeries.map((b) => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
+          </Select>
+          <Select
+            label="Garantir categoria no pacote"
+            value={bulkSeriesEnsureInPackageId}
+            onChange={(e) => setBulkSeriesEnsureInPackageId(e.target.value)}
+          >
+            <option value="">Não mexer</option>
+            {packages.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </Select>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setBulkEditSeriesModalOpen(false)}>
               Cancelar
@@ -8171,7 +8248,9 @@ export function CoreXtreamPage() {
                 const payload: any = { seriesIds: selectedSeriesIds };
                 if (bulkSeriesStatus === 'active') payload.isActive = true;
                 if (bulkSeriesStatus === 'inactive') payload.isActive = false;
-                if (payload.isActive === undefined) {
+                if (bulkSeriesMoveToBouquetId) payload.moveToBouquetId = bulkSeriesMoveToBouquetId;
+                if (bulkSeriesEnsureInPackageId) payload.ensureInPackageId = bulkSeriesEnsureInPackageId;
+                if (payload.isActive === undefined && payload.moveToBouquetId === undefined && payload.ensureInPackageId === undefined) {
                   toast.error('Selecione pelo menos 1 campo para alterar');
                   return;
                 }
