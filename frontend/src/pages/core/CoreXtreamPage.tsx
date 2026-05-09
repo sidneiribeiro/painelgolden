@@ -742,6 +742,7 @@ export function CoreXtreamPage() {
     isActive: true,
     bouquetIds: [] as string[],
   });
+  const [vodPosterFile, setVodPosterFile] = useState<File | null>(null);
 
   const [seriesForm, setSeriesForm] = useState({
     name: '',
@@ -749,6 +750,7 @@ export function CoreXtreamPage() {
     isActive: true,
     bouquetIds: [] as string[],
   });
+  const [seriesCoverFile, setSeriesCoverFile] = useState<File | null>(null);
 
   const [episodeForm, setEpisodeForm] = useState({
     season: 1,
@@ -1867,6 +1869,28 @@ export function CoreXtreamPage() {
     },
   });
 
+  const uploadVodPosterMutation = useMutation({
+    mutationFn: async (payload: { vodId: string; file: File }) => {
+      const form = new FormData();
+      form.append('poster', payload.file);
+      const res = await api.post(`/core/vod/${payload.vodId}/poster`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return res.data?.data as CoreVodItem;
+    },
+    onSuccess: (updated) => {
+      toast.success('Capa atualizada');
+      queryClient.invalidateQueries({ queryKey: ['core-vod'] });
+      if (editingVod?.id && updated?.id === editingVod.id) {
+        setVodForm((p) => ({ ...p, posterUrl: updated.posterUrl || '' }));
+      }
+      setVodPosterFile(null);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao enviar capa');
+    },
+  });
+
   const deleteVodMutation = useMutation({
     mutationFn: async (id: string) => {
       await api.delete(`/core/vod/${id}`);
@@ -1920,6 +1944,28 @@ export function CoreXtreamPage() {
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error || 'Erro ao atualizar série');
+    },
+  });
+
+  const uploadSeriesCoverMutation = useMutation({
+    mutationFn: async (payload: { seriesId: string; file: File }) => {
+      const form = new FormData();
+      form.append('cover', payload.file);
+      const res = await api.post(`/core/series/${payload.seriesId}/cover`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return res.data?.data as CoreSeries;
+    },
+    onSuccess: (updated) => {
+      toast.success('Capa atualizada');
+      queryClient.invalidateQueries({ queryKey: ['core-series'] });
+      if (editingSeries?.id && updated?.id === editingSeries.id) {
+        setSeriesForm((p) => ({ ...p, coverUrl: updated.coverUrl || '' }));
+      }
+      setSeriesCoverFile(null);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao enviar capa');
     },
   });
 
@@ -2877,6 +2923,7 @@ export function CoreXtreamPage() {
   const openCreateVod = () => {
     setEditingVod(null);
     setVodForm({ name: '', streamUrl: '', posterUrl: '', isActive: true, bouquetIds: [] });
+    setVodPosterFile(null);
     setVodModalOpen(true);
   };
 
@@ -2889,12 +2936,14 @@ export function CoreXtreamPage() {
       isActive: v.isActive,
       bouquetIds: v.bouquetIds || [],
     });
+    setVodPosterFile(null);
     setVodModalOpen(true);
   };
 
   const openCreateSeries = () => {
     setEditingSeries(null);
     setSeriesForm({ name: '', coverUrl: '', isActive: true, bouquetIds: [] });
+    setSeriesCoverFile(null);
     setSeriesModalOpen(true);
   };
 
@@ -2906,6 +2955,7 @@ export function CoreXtreamPage() {
       isActive: s.isActive,
       bouquetIds: s.bouquetIds || [],
     });
+    setSeriesCoverFile(null);
     setSeriesModalOpen(true);
   };
 
@@ -2998,7 +3048,9 @@ export function CoreXtreamPage() {
     startServerSshTestMutation.isPending ||
     startServerInstallMutation.isPending ||
     cancelEdgeJobMutation.isPending ||
-    uploadStreamLogoMutation.isPending;
+    uploadStreamLogoMutation.isPending ||
+    uploadVodPosterMutation.isPending ||
+    uploadSeriesCoverMutation.isPending;
 
   return (
     <div className="space-y-6">
@@ -3017,12 +3069,12 @@ export function CoreXtreamPage() {
           <div>
             <h2 className="text-xl font-semibold text-zinc-900 dark:text-white">Xtream Novo (Core)</h2>
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              Streams/VOD/Séries → Categorias → Pacotes → Linhas (XC via /get.php, /player_api.php)
+              Streams/VOD/Séries → Categorias → Pacotes → Clientes (XC via /get.php, /player_api.php)
             </p>
           </div>
           <div className="flex flex-wrap gap-2 items-center">
             <button className={tabButtonClass('overview')} onClick={() => setActiveTab('overview')}>Conteúdos</button>
-            <button className={tabButtonClass('lines')} onClick={() => setActiveTab('lines')}>Linhas</button>
+            <button className={tabButtonClass('lines')} onClick={() => setActiveTab('lines')}>Clientes</button>
             <button className={tabButtonClass('connections')} onClick={() => setActiveTab('connections')}>Conexões</button>
             <button className={tabButtonClass('payments')} onClick={() => setActiveTab('payments')}>Pagamentos</button>
             <button className={tabButtonClass('packages')} onClick={() => setActiveTab('packages')}>Pacotes</button>
@@ -3227,10 +3279,10 @@ export function CoreXtreamPage() {
       {tab === 'lines' ? (
         <Card>
           <div className="flex items-center justify-between gap-3">
-            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Linhas</h3>
+            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Clientes</h3>
             <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={openSale} disabled={isBillingBlocked}>Vender Linha</Button>
-              <Button onClick={openCreateLine} disabled={isBillingBlocked}>Nova Linha</Button>
+              <Button variant="outline" onClick={openSale} disabled={isBillingBlocked}>Vender Cliente</Button>
+              <Button onClick={openCreateLine} disabled={isBillingBlocked}>Novo Cliente</Button>
             </div>
           </div>
           {publicCoreCheckoutUrl ? (
@@ -5879,7 +5931,10 @@ export function CoreXtreamPage() {
 
       <Modal
         isOpen={vodModalOpen}
-        onClose={() => setVodModalOpen(false)}
+        onClose={() => {
+          setVodModalOpen(false);
+          setVodPosterFile(null);
+        }}
         title={editingVod ? 'Editar VOD' : 'Novo VOD'}
         size="lg"
       >
@@ -5899,6 +5954,53 @@ export function CoreXtreamPage() {
             value={vodForm.posterUrl}
             onChange={(e) => setVodForm((p) => ({ ...p, posterUrl: e.target.value }))}
           />
+          {vodForm.posterUrl ? (
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                {getImageUrl(vodForm.posterUrl) ? (
+                  <img
+                    src={getImageUrl(vodForm.posterUrl) || ''}
+                    alt=""
+                    className="w-10 h-10 rounded object-cover bg-white"
+                    onError={(e) => {
+                      (e.currentTarget as any).style.display = 'none';
+                    }}
+                  />
+                ) : null}
+                <div className="text-xs text-zinc-600 dark:text-zinc-400 truncate max-w-[360px]">{vodForm.posterUrl}</div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => window.open(getImageUrl(vodForm.posterUrl) || vodForm.posterUrl, '_blank', 'noopener,noreferrer')}
+              >
+                Abrir
+              </Button>
+            </div>
+          ) : null}
+          {editingVod ? (
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Enviar capa do filme</div>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setVodPosterFile(e.target.files?.[0] || null)}
+              />
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={isBillingBlocked || !vodPosterFile || uploadVodPosterMutation.isPending}
+                  onClick={() => {
+                    if (!editingVod || !vodPosterFile) return;
+                    uploadVodPosterMutation.mutate({ vodId: editingVod.id, file: vodPosterFile });
+                  }}
+                >
+                  Enviar capa
+                </Button>
+              </div>
+            </div>
+          ) : null}
           <Select
             label="Status"
             value={vodForm.isActive ? 'true' : 'false'}
@@ -5939,7 +6041,15 @@ export function CoreXtreamPage() {
           </div>
 
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setVodModalOpen(false)}>Cancelar</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setVodModalOpen(false);
+                setVodPosterFile(null);
+              }}
+            >
+              Cancelar
+            </Button>
             <Button
               disabled={isBillingBlocked}
               onClick={() => {
@@ -5959,7 +6069,10 @@ export function CoreXtreamPage() {
 
       <Modal
         isOpen={seriesModalOpen}
-        onClose={() => setSeriesModalOpen(false)}
+        onClose={() => {
+          setSeriesModalOpen(false);
+          setSeriesCoverFile(null);
+        }}
         title={editingSeries ? 'Editar Série' : 'Nova Série'}
         size="lg"
       >
@@ -5974,6 +6087,53 @@ export function CoreXtreamPage() {
             value={seriesForm.coverUrl}
             onChange={(e) => setSeriesForm((p) => ({ ...p, coverUrl: e.target.value }))}
           />
+          {seriesForm.coverUrl ? (
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                {getImageUrl(seriesForm.coverUrl) ? (
+                  <img
+                    src={getImageUrl(seriesForm.coverUrl) || ''}
+                    alt=""
+                    className="w-10 h-10 rounded object-cover bg-white"
+                    onError={(e) => {
+                      (e.currentTarget as any).style.display = 'none';
+                    }}
+                  />
+                ) : null}
+                <div className="text-xs text-zinc-600 dark:text-zinc-400 truncate max-w-[360px]">{seriesForm.coverUrl}</div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => window.open(getImageUrl(seriesForm.coverUrl) || seriesForm.coverUrl, '_blank', 'noopener,noreferrer')}
+              >
+                Abrir
+              </Button>
+            </div>
+          ) : null}
+          {editingSeries ? (
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Enviar capa da série</div>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setSeriesCoverFile(e.target.files?.[0] || null)}
+              />
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={isBillingBlocked || !seriesCoverFile || uploadSeriesCoverMutation.isPending}
+                  onClick={() => {
+                    if (!editingSeries || !seriesCoverFile) return;
+                    uploadSeriesCoverMutation.mutate({ seriesId: editingSeries.id, file: seriesCoverFile });
+                  }}
+                >
+                  Enviar capa
+                </Button>
+              </div>
+            </div>
+          ) : null}
           <Select
             label="Status"
             value={seriesForm.isActive ? 'true' : 'false'}
@@ -6014,7 +6174,15 @@ export function CoreXtreamPage() {
           </div>
 
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setSeriesModalOpen(false)}>Cancelar</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSeriesModalOpen(false);
+                setSeriesCoverFile(null);
+              }}
+            >
+              Cancelar
+            </Button>
             <Button
               disabled={isBillingBlocked}
               onClick={() => {

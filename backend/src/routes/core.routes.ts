@@ -49,10 +49,12 @@ import {
   listVod,
   createVod,
   updateVod,
+  uploadVodPoster,
   removeVod,
   listSeries,
   createSeries,
   updateSeries,
+  uploadSeriesCover,
   removeSeries,
   listSeriesEpisodes,
   createSeriesEpisode,
@@ -135,11 +137,13 @@ router.post('/payments/:id/recreate-pix', requireBillingValid, recreateCorePayme
 router.get('/vod', listVod);
 router.post('/vod', requireBillingValid, createVod);
 router.put('/vod/:id', requireBillingValid, updateVod);
+router.post('/vod/:id/poster', requireBillingValid, upload.single('poster'), uploadVodPoster);
 router.delete('/vod/:id', requireBillingValid, removeVod);
 
 router.get('/series', listSeries);
 router.post('/series', requireBillingValid, createSeries);
 router.put('/series/:id', requireBillingValid, updateSeries);
+router.post('/series/:id/cover', requireBillingValid, upload.single('cover'), uploadSeriesCover);
 router.delete('/series/:id', requireBillingValid, removeSeries);
 
 router.get('/series/:seriesId/episodes', listSeriesEpisodes);

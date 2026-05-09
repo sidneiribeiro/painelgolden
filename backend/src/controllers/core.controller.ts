@@ -3959,6 +3959,62 @@ export const updateVod = asyncHandler(async (req: Request, res: Response) => {
   res.json({ data: updated });
 });
 
+export const uploadVodPoster = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+  const file = (req as any).file;
+
+  if (!file) {
+    throw new AppError(400, 'Nenhum arquivo enviado');
+  }
+
+  const vod = await prisma.coreVodItem.findFirst({ where: { id, ...coreOwnerWhere(currentUser) } });
+  if (!vod) {
+    await fs.unlink(file.path).catch(() => {});
+    throw new AppError(404, 'VOD não encontrado');
+  }
+
+  const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+  if (!allowedMimes.includes(file.mimetype)) {
+    await fs.unlink(file.path).catch(() => {});
+    throw new AppError(400, 'Formato de arquivo não permitido. Use JPG, PNG, GIF ou WebP');
+  }
+
+  const maxSize = 5 * 1024 * 1024;
+  if (file.size > maxSize) {
+    await fs.unlink(file.path).catch(() => {});
+    throw new AppError(400, 'Arquivo muito grande. Tamanho máximo: 5MB');
+  }
+
+  const uploadsDir = '/app/storage/posters';
+  await fs.mkdir(uploadsDir, { recursive: true });
+
+  const ext = path.extname(file.originalname) || '.jpg';
+  const safeExt = ext.length <= 10 ? ext : '.jpg';
+  const fileName = `core-vod-${currentUser.userId}-${id}-${Date.now()}${safeExt}`;
+  const filePath = path.join(uploadsDir, fileName);
+
+  await fs.copyFile(file.path, filePath);
+  await fs.unlink(file.path).catch(() => {});
+
+  const posterUrl = `/uploads/posters/${fileName}`;
+
+  const existingPoster = String(vod.posterUrl || '');
+  if (existingPoster.startsWith('/uploads/posters/')) {
+    const oldName = existingPoster.slice('/uploads/posters/'.length);
+    if (oldName.startsWith(`core-vod-${currentUser.userId}-${id}-`)) {
+      await fs.unlink(path.join('/app/storage/posters', oldName)).catch(() => {});
+    }
+  }
+
+  const updated = await prisma.coreVodItem.update({
+    where: { id },
+    data: { posterUrl },
+  });
+
+  res.json({ data: updated });
+});
+
 export const removeVod = asyncHandler(async (req: Request, res: Response) => {
   const currentUser = req.user!;
   const { id } = req.params;
@@ -4061,6 +4117,62 @@ export const updateSeries = asyncHandler(async (req: Request, res: Response) => 
     });
     await syncSeriesBouquets(id, allOwnedBouquets.map(b => b.id), data.bouquetIds);
   }
+
+  res.json({ data: updated });
+});
+
+export const uploadSeriesCover = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+  const file = (req as any).file;
+
+  if (!file) {
+    throw new AppError(400, 'Nenhum arquivo enviado');
+  }
+
+  const series = await prisma.coreSeries.findFirst({ where: { id, ...coreOwnerWhere(currentUser) } });
+  if (!series) {
+    await fs.unlink(file.path).catch(() => {});
+    throw new AppError(404, 'Série não encontrada');
+  }
+
+  const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+  if (!allowedMimes.includes(file.mimetype)) {
+    await fs.unlink(file.path).catch(() => {});
+    throw new AppError(400, 'Formato de arquivo não permitido. Use JPG, PNG, GIF ou WebP');
+  }
+
+  const maxSize = 5 * 1024 * 1024;
+  if (file.size > maxSize) {
+    await fs.unlink(file.path).catch(() => {});
+    throw new AppError(400, 'Arquivo muito grande. Tamanho máximo: 5MB');
+  }
+
+  const uploadsDir = '/app/storage/covers';
+  await fs.mkdir(uploadsDir, { recursive: true });
+
+  const ext = path.extname(file.originalname) || '.jpg';
+  const safeExt = ext.length <= 10 ? ext : '.jpg';
+  const fileName = `core-series-${currentUser.userId}-${id}-${Date.now()}${safeExt}`;
+  const filePath = path.join(uploadsDir, fileName);
+
+  await fs.copyFile(file.path, filePath);
+  await fs.unlink(file.path).catch(() => {});
+
+  const coverUrl = `/uploads/covers/${fileName}`;
+
+  const existingCover = String(series.coverUrl || '');
+  if (existingCover.startsWith('/uploads/covers/')) {
+    const oldName = existingCover.slice('/uploads/covers/'.length);
+    if (oldName.startsWith(`core-series-${currentUser.userId}-${id}-`)) {
+      await fs.unlink(path.join('/app/storage/covers', oldName)).catch(() => {});
+    }
+  }
+
+  const updated = await prisma.coreSeries.update({
+    where: { id },
+    data: { coverUrl },
+  });
 
   res.json({ data: updated });
 });

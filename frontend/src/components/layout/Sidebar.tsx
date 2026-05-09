@@ -72,7 +72,7 @@ export const ALL_MENU_KEYS = [
 export const MENU_KEY_LABELS: Record<string, string> = {
   dashboard: 'Dashboard',
   bouquets: 'Categorias',
-  users: 'Usuários',
+  users: 'Revendedores',
   resellers: 'Revendedores',
   vod: 'VOD',
   live: 'LIVE TV',
@@ -101,7 +101,7 @@ const serverItems: NavItem[] = [
   { path: '/core', label: 'Xtream Novo', icon: Icons.core, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
   { path: '/core?tab=bouquets', label: 'Categorias', icon: Icons.bouquets, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
   { path: '/core?tab=packages', label: 'Pacotes', icon: Icons.packages, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
-  { path: '/core?tab=lines', label: 'Linhas', icon: Icons.customers, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=lines', label: 'Clientes', icon: Icons.customers, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
 ];
 
 const bouquetItems: NavItem[] = [
@@ -109,7 +109,7 @@ const bouquetItems: NavItem[] = [
 ];
 
 const managementItems: NavItem[] = [
-  { path: '/users', label: 'Usuários', icon: Icons.users, key: 'users', roles: ['SUPER_ADMIN', 'ADMIN'] },
+  { path: '/users', label: 'Revendedores', icon: Icons.users, key: 'users', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/settings/access-groups', label: 'Grupos de Acesso', icon: Icons.settings, key: 'access_groups', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/settings/panel', label: 'Configurações', icon: Icons.panel, key: 'panel_settings' },
   { path: '/settings/tmdb-keys', label: 'TMDB Keys', icon: Icons.tmdb, key: 'tmdb_keys', roles: ['SUPER_ADMIN', 'ADMIN'] },
