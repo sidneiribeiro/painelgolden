@@ -683,6 +683,7 @@ export function CoreXtreamPage() {
     setM3uPreview(null);
     setM3uPreviewSelectedKeys([]);
     setM3uPreviewSearch('');
+    setExcludeAdultCategories(true);
     setImportModalOpen(true);
   };
 
@@ -883,6 +884,7 @@ export function CoreXtreamPage() {
   const [m3uPreview, setM3uPreview] = useState<CoreM3UPreview | null>(null);
   const [m3uPreviewSelectedKeys, setM3uPreviewSelectedKeys] = useState<string[]>([]);
   const [m3uPreviewSearch, setM3uPreviewSearch] = useState('');
+  const [excludeAdultCategories, setExcludeAdultCategories] = useState(true);
 
   const [scheduleForm, setScheduleForm] = useState({
     name: '',
@@ -2374,7 +2376,10 @@ export function CoreXtreamPage() {
     },
     onSuccess: (data) => {
       setM3uPreview(data);
-      setM3uPreviewSelectedKeys((data?.categories || []).map((c) => c.key));
+      const categories = data?.categories || [];
+      setM3uPreviewSelectedKeys(
+        (excludeAdultCategories ? categories.filter((c) => !c.isAdult) : categories).map((c) => c.key),
+      );
       toast.success('Prévia carregada');
     },
     onError: (error: any) => {
@@ -6575,6 +6580,7 @@ export function CoreXtreamPage() {
                 setM3uPreview(null);
                 setM3uPreviewSelectedKeys([]);
                 setM3uPreviewSearch('');
+                setExcludeAdultCategories(true);
               }}
             >
               <option value="all">Tudo</option>
@@ -6701,6 +6707,24 @@ export function CoreXtreamPage() {
                   Itens: {m3uPreview.stats.total} (Live {m3uPreview.stats.live} • Filmes {m3uPreview.stats.movies} • Séries {m3uPreview.stats.series})
                 </div>
 
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={excludeAdultCategories}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      setExcludeAdultCategories(next);
+                      if (next) {
+                        setM3uPreviewSelectedKeys((prev) => {
+                          const adultKeys = new Set((m3uPreview.categories || []).filter((c) => c.isAdult).map((c) => c.key));
+                          return prev.filter((k) => !adultKeys.has(k));
+                        });
+                      }
+                    }}
+                  />
+                  <span className="text-sm text-zinc-800 dark:text-zinc-200">Excluir categorias adulto (XXX/Adultos)</span>
+                </label>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   <Input
                     label="Filtrar categorias"
@@ -6711,7 +6735,12 @@ export function CoreXtreamPage() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setM3uPreviewSelectedKeys((m3uPreview.categories || []).map((c) => c.key))}
+                      onClick={() => {
+                        const list = excludeAdultCategories
+                          ? (m3uPreview.categories || []).filter((c) => !c.isAdult)
+                          : (m3uPreview.categories || []);
+                        setM3uPreviewSelectedKeys(list.map((c) => c.key));
+                      }}
                     >
                       Selecionar tudo
                     </Button>
@@ -6721,6 +6750,14 @@ export function CoreXtreamPage() {
                       onClick={() => setM3uPreviewSelectedKeys([])}
                     >
                       Limpar
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={excludeAdultCategories}
+                      onClick={() => setM3uPreviewSelectedKeys((m3uPreview.categories || []).filter((c) => c.isAdult).map((c) => c.key))}
+                    >
+                      Só adulto
                     </Button>
                   </div>
                 </div>
@@ -6735,11 +6772,16 @@ export function CoreXtreamPage() {
                       })
                       .map((c) => {
                         const checked = m3uPreviewSelectedKeys.includes(c.key);
+                        const disabled = excludeAdultCategories && c.isAdult;
                         return (
-                          <label key={c.key} className="flex items-center gap-2 px-3 py-2 cursor-pointer">
+                          <label
+                            key={c.key}
+                            className={`flex items-center gap-2 px-3 py-2 ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                          >
                             <input
                               type="checkbox"
                               checked={checked}
+                              disabled={disabled}
                               onChange={(e) => {
                                 const next = e.target.checked;
                                 setM3uPreviewSelectedKeys((prev) => {
