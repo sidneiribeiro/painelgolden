@@ -459,7 +459,7 @@ const parseTabFromSearch = (search: string): TabKey => {
   const raw = new URLSearchParams(search || '').get('tab');
   const t = (raw || '').trim();
   const allowed: TabKey[] = ['overview', 'streams', 'monitor', 'servers', 'connections', 'bouquets', 'packages', 'lines', 'payments', 'vod', 'series', 'schedules', 'epg'];
-  return allowed.includes(t as TabKey) ? (t as TabKey) : 'lines';
+  return allowed.includes(t as TabKey) ? (t as TabKey) : 'overview';
 };
 
 const toDateInput = (iso: string) => {
@@ -615,6 +615,33 @@ export function CoreXtreamPage() {
     const next = parseTabFromSearch(location.search);
     setTab((prev) => (prev === next ? prev : next));
   }, [location.search]);
+
+  const openImportModal = () => {
+    setImportForm({
+      url: '',
+      mode: 'append',
+      type: 'all',
+      createPackage: true,
+      packageName: 'PACOTE PADRÃO',
+      createLine: false,
+      lineUsername: '',
+      linePassword: '',
+      lineExpiresDays: 30,
+      background: true,
+      enrichWithTMDB: true,
+    });
+    setImportModalOpen(true);
+  };
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search || '');
+    const action = String(params.get('action') || '').trim();
+    if (action !== 'import-m3u') return;
+
+    openImportModal();
+    params.delete('action');
+    navigate({ pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : '' }, { replace: true });
+  }, [location.pathname, location.search]);
 
   const setActiveTab = (next: TabKey) => {
     const params = new URLSearchParams(location.search || '');
@@ -3125,44 +3152,6 @@ export function CoreXtreamPage() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h2 className="text-xl font-semibold text-zinc-900 dark:text-white">Xtream Novo</h2>
-            <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              Streams/Filmes/Séries → Categorias → Pacotes → Clientes (XC via /get.php, /player_api.php)
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2 items-center">
-            <button className={tabButtonClass('overview')} onClick={() => setActiveTab('overview')}>Conteúdos</button>
-            <button className={tabButtonClass('lines')} onClick={() => setActiveTab('lines')}>Clientes</button>
-            <button className={tabButtonClass('connections')} onClick={() => setActiveTab('connections')}>Conexões</button>
-            <button className={tabButtonClass('payments')} onClick={() => setActiveTab('payments')}>Pagamentos</button>
-            <button className={tabButtonClass('packages')} onClick={() => setActiveTab('packages')}>Pacotes</button>
-            <button className={tabButtonClass('bouquets')} onClick={() => setActiveTab('bouquets')}>Categorias</button>
-            <button className={tabButtonClass('vod')} onClick={() => setActiveTab('vod')}>Filmes</button>
-            <button className={tabButtonClass('series')} onClick={() => setActiveTab('series')}>Séries</button>
-            <button className={tabButtonClass('streams')} onClick={() => setActiveTab('streams')}>Streams</button>
-            <button className={tabButtonClass('monitor')} onClick={() => setActiveTab('monitor')}>Monitoramento</button>
-            <button className={tabButtonClass('servers')} onClick={() => setActiveTab('servers')}>Servidores</button>
-            <button className={tabButtonClass('schedules')} onClick={() => setActiveTab('schedules')}>Agendas</button>
-            <button className={tabButtonClass('epg')} onClick={() => setActiveTab('epg')}>EPG</button>
-            <Button
-              variant="outline"
-              disabled={isBillingBlocked}
-              onClick={() => {
-                setImportForm({
-                  url: '',
-                  mode: 'append',
-                  type: 'all',
-                  createPackage: true,
-                  packageName: 'PACOTE PADRÃO',
-                  createLine: false,
-                  lineUsername: '',
-                  linePassword: '',
-                  lineExpiresDays: 30,
-                });
-                setImportModalOpen(true);
-              }}
-            >
-              Importar M3U
-            </Button>
           </div>
         </div>
       </Card>

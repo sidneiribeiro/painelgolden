@@ -98,10 +98,19 @@ const navItems: NavItem[] = [
 ];
 
 const serverItems: NavItem[] = [
-  { path: '/core', label: 'Xtream Novo', icon: Icons.core, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=overview', label: 'Dashboard', icon: Icons.dashboard, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=streams', label: 'Streams', icon: Icons.live, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=vod', label: 'Filmes', icon: Icons.vod, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=series', label: 'Séries', icon: Icons.vod, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
   { path: '/core?tab=bouquets', label: 'Categorias', icon: Icons.bouquets, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
   { path: '/core?tab=packages', label: 'Pacotes', icon: Icons.packages, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
   { path: '/core?tab=lines', label: 'Clientes', icon: Icons.customers, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=connections', label: 'Conexões', icon: Icons.financial, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=monitor', label: 'Monitoramento', icon: Icons.notifications, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=servers', label: 'Servidores', icon: Icons.core, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=schedules', label: 'Agendas', icon: Icons.settings, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=epg', label: 'EPG', icon: Icons.live, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=overview&action=import-m3u', label: 'Importar M3U', icon: Icons.import, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
 ];
 
 const bouquetItems: NavItem[] = [
