@@ -736,7 +736,7 @@ export function CoreXtreamPage() {
 
   const [importForm, setImportForm] = useState({
     url: '',
-    mode: 'append' as 'append' | 'replace',
+    mode: 'append' as 'append' | 'replace' | 'update',
     type: 'all' as 'all' | 'live' | 'movie' | 'series' | 'vod',
     createPackage: true,
     packageName: 'PACOTE PADRÃO',
@@ -744,6 +744,7 @@ export function CoreXtreamPage() {
     lineUsername: '',
     linePassword: '',
     lineExpiresDays: 30,
+    background: true,
   });
 
   const [scheduleForm, setScheduleForm] = useState({
@@ -751,11 +752,13 @@ export function CoreXtreamPage() {
     m3uUrl: '',
     cronExpression: '0 5 * * *',
     type: 'all' as 'all' | 'live' | 'movie' | 'series' | 'vod',
-    mode: 'replace' as 'append' | 'replace',
+    mode: 'replace' as 'append' | 'replace' | 'update',
     createPackage: true,
     packageName: 'PACOTE PADRÃO',
     isActive: true,
   });
+
+  const [importJobId, setImportJobId] = useState<string>('');
 
   const [epgForm, setEpgForm] = useState({
     name: '',
@@ -1808,11 +1811,18 @@ export function CoreXtreamPage() {
         lineUsername: importForm.lineUsername,
         linePassword: importForm.linePassword,
         lineExpiresDays: importForm.lineExpiresDays,
+        background: importForm.background,
       };
       const res = await api.post('/core/import/m3u', payload);
       return res.data;
     },
     onSuccess: (data: any) => {
+      if (data?.jobId) {
+        toast.success('Importação iniciada em segundo plano');
+        setImportModalOpen(false);
+        setImportJobId(String(data.jobId));
+        return;
+      }
       const imported = data?.imported;
       const msg = imported
         ? `Importado: bouquets ${imported.bouquetsCreated}, live ${imported.streamsCreated}, vod ${imported.vodCreated}, séries ${imported.seriesCreated}, eps ${imported.episodesCreated}, skip ${imported.skipped}`
@@ -1832,6 +1842,49 @@ export function CoreXtreamPage() {
       toast.error(error.response?.data?.error || 'Erro ao importar M3U');
     },
   });
+
+  useEffect(() => {
+    if (!importJobId) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const res = await api.get(`/core/import/m3u/jobs/${importJobId}`);
+        const job = res.data?.data;
+        const status = String(job?.status || '');
+        if (status === 'success') {
+          if (cancelled) return;
+          const imported = job?.result?.imported;
+          const msg = imported
+            ? `Importado: bouquets ${imported.bouquetsCreated}, live ${imported.streamsCreated}, vod ${imported.vodCreated}, séries ${imported.seriesCreated}, eps ${imported.episodesCreated}, skip ${imported.skipped}`
+            : 'Importação concluída';
+          toast.success(msg);
+          if (job?.result?.createdLine?.username && job?.result?.createdLine?.password) {
+            toast.success(`Linha criada: ${job.result.createdLine.username} / ${job.result.createdLine.password}`);
+          }
+          queryClient.invalidateQueries({ queryKey: ['core-streams'] });
+          queryClient.invalidateQueries({ queryKey: ['core-bouquets'] });
+          queryClient.invalidateQueries({ queryKey: ['core-vod'] });
+          queryClient.invalidateQueries({ queryKey: ['core-series'] });
+          if (activeSeriesId) queryClient.invalidateQueries({ queryKey: ['core-series-episodes', activeSeriesId] });
+          setImportJobId('');
+          return;
+        }
+        if (status === 'error') {
+          if (cancelled) return;
+          toast.error(job?.error || 'Erro ao importar M3U');
+          setImportJobId('');
+        }
+      } catch (e: any) {
+        if (cancelled) return;
+      }
+    };
+    tick();
+    const interval = window.setInterval(tick, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [importJobId, activeSeriesId, queryClient]);
 
   const createScheduleMutation = useMutation({
     mutationFn: async () => {
@@ -5295,8 +5348,9 @@ export function CoreXtreamPage() {
               value={scheduleForm.mode}
               onChange={(e) => setScheduleForm((p) => ({ ...p, mode: e.target.value as any }))}
             >
-              <option value="replace">Atualizar (replace)</option>
               <option value="append">Adicionar (append)</option>
+              <option value="update">Atualizar/Mesclar (update)</option>
+              <option value="replace">Apagar e importar (replace)</option>
             </Select>
           </div>
           <label className="flex items-center gap-2">
@@ -5305,15 +5359,8 @@ export function CoreXtreamPage() {
               checked={scheduleForm.createPackage}
               onChange={(e) => setScheduleForm((p) => ({ ...p, createPackage: e.target.checked }))}
             />
-            <span className="text-sm text-zinc-800 dark:text-zinc-200">Criar/Atualizar pacote padrão com os bouquets importados</span>
+            <span className="text-sm text-zinc-800 dark:text-zinc-200">Criar/Atualizar pacotes padrão (Completo + Completo sem adulto)</span>
           </label>
-          {scheduleForm.createPackage ? (
-            <Input
-              label="Nome do pacote"
-              value={scheduleForm.packageName}
-              onChange={(e) => setScheduleForm((p) => ({ ...p, packageName: e.target.value }))}
-            />
-          ) : null}
           <Select
             label="Ativo"
             value={scheduleForm.isActive ? 'true' : 'false'}
@@ -5371,6 +5418,7 @@ export function CoreXtreamPage() {
               onChange={(e) => setImportForm((p) => ({ ...p, mode: e.target.value as any }))}
             >
               <option value="append">Adicionar (append)</option>
+              <option value="update">Atualizar/Mesclar (update)</option>
               <option value="replace">Apagar e importar (replace)</option>
             </Select>
           </div>
@@ -5382,15 +5430,8 @@ export function CoreXtreamPage() {
                 checked={importForm.createPackage}
                 onChange={(e) => setImportForm((p) => ({ ...p, createPackage: e.target.checked }))}
               />
-              <span className="text-sm text-zinc-800 dark:text-zinc-200">Criar/Atualizar pacote padrão com os bouquets importados</span>
+              <span className="text-sm text-zinc-800 dark:text-zinc-200">Criar/Atualizar pacotes padrão (Completo + Completo sem adulto)</span>
             </label>
-            {importForm.createPackage ? (
-              <Input
-                label="Nome do pacote"
-                value={importForm.packageName}
-                onChange={(e) => setImportForm((p) => ({ ...p, packageName: e.target.value }))}
-              />
-            ) : null}
           </div>
 
           <div className="space-y-2">
@@ -5423,6 +5464,15 @@ export function CoreXtreamPage() {
               </div>
             ) : null}
           </div>
+
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={importForm.background}
+              onChange={(e) => setImportForm((p) => ({ ...p, background: e.target.checked }))}
+            />
+            <span className="text-sm text-zinc-800 dark:text-zinc-200">Rodar em segundo plano (continua mesmo se fechar a página)</span>
+          </label>
 
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setImportModalOpen(false)}>Cancelar</Button>

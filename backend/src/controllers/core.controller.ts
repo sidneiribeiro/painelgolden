@@ -205,7 +205,7 @@ const seriesEpisodeSchema = z.object({
 
 const importM3USchema = z.object({
   url: z.string().url(),
-  mode: z.enum(['append', 'replace']).optional(),
+  mode: z.enum(['append', 'replace', 'update']).optional(),
   type: z.enum(['all', 'live', 'movie', 'series', 'vod']).optional(),
   createPackage: z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true').optional(),
   packageName: z.string().min(1).optional(),
@@ -213,6 +213,7 @@ const importM3USchema = z.object({
   lineUsername: z.string().min(3).max(64).optional(),
   linePassword: z.string().min(4).max(128).optional(),
   lineExpiresDays: z.union([z.number(), z.string()]).transform(v => toInt(v, 30)).optional(),
+  background: z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true').optional(),
 });
 
 const m3uScheduleSchema = z.object({
@@ -220,7 +221,7 @@ const m3uScheduleSchema = z.object({
   m3uUrl: z.string().url(),
   cronExpression: z.string().min(1),
   type: z.enum(['all', 'live', 'movie', 'series', 'vod']).optional(),
-  mode: z.enum(['append', 'replace']).optional(),
+  mode: z.enum(['append', 'replace', 'update']).optional(),
   createPackage: z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true' || v === undefined).optional(),
   packageName: z.string().min(1).optional(),
   isActive: z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true' || v === undefined).optional(),
@@ -369,6 +370,44 @@ function parseSeriesEpisodeName(raw: string): { seriesName: string; season: numb
 
 type ImportM3UInput = z.infer<typeof importM3USchema>;
 
+function isAdultCategoryName(name: string) {
+  const raw = (name || '').trim();
+  if (!raw) return false;
+  const normalized = raw
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const needles = [
+    'adult',
+    'adults',
+    'adultos',
+    'xxx',
+    'porn',
+    'porno',
+    'sex',
+    'sexy',
+    'erotic',
+    'erotico',
+    'hentai',
+    'onlyfans',
+    'playboy',
+  ];
+  for (const n of needles) {
+    if (normalized.includes(n)) return true;
+  }
+  if (/(^|[^0-9])18\+?([^0-9]|$)/.test(normalized)) return true;
+  return false;
+}
+
+function isPrismaUniqueError(error: any) {
+  if (!error) return false;
+  if (error.code === 'P2002') return true;
+  const msg = error?.message ? String(error.message) : '';
+  return msg.includes('Unique constraint') || msg.includes('unique constraint');
+}
+
 async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
   const {
     url,
@@ -441,6 +480,10 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
   let vodCreated = 0;
   let seriesCreated = 0;
   let episodesCreated = 0;
+  let streamsUpdated = 0;
+  let vodUpdated = 0;
+  let seriesUpdated = 0;
+  let episodesUpdated = 0;
   let skipped = 0;
 
   const allOwnedBouquets = await prisma.coreBouquet.findMany({
@@ -459,21 +502,66 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
 
     if (item.type === 'live') {
       try {
-        const stream = await prisma.coreStream.create({
-          data: {
-            ownerId,
-            name: item.name,
-            streamUrl: item.url,
-            logoUrl: item.logo || null,
-            epgChannelId: (item.tvgId || item.tvgName || null) as any,
-            isActive: true,
-          },
-          select: { id: true },
-        });
-        streamsCreated++;
-        await prisma.coreBouquetStream.create({
-          data: { bouquetId, streamId: stream.id },
-        }).catch(() => {});
+        let streamId: string | null = null;
+        if (mode === 'update') {
+          try {
+            const created = await prisma.coreStream.create({
+              data: {
+                ownerId,
+                name: item.name,
+                streamUrl: item.url,
+                logoUrl: item.logo || null,
+                epgChannelId: (item.tvgId || item.tvgName || null) as any,
+                isActive: true,
+              },
+              select: { id: true },
+            });
+            streamsCreated++;
+            streamId = created.id;
+          } catch (e: any) {
+            if (!isPrismaUniqueError(e)) {
+              throw e;
+            }
+            const existing = await prisma.coreStream.findFirst({
+              where: { ownerId, name: item.name },
+              select: { id: true },
+            });
+            if (!existing) throw e;
+            const updated = await prisma.coreStream.update({
+              where: { id: existing.id },
+              data: {
+                streamUrl: item.url,
+                logoUrl: item.logo || null,
+                epgChannelId: (item.tvgId || item.tvgName || null) as any,
+                isActive: true,
+              },
+              select: { id: true },
+            });
+            streamsUpdated++;
+            streamId = updated.id;
+          }
+        } else {
+          const stream = await prisma.coreStream.create({
+            data: {
+              ownerId,
+              name: item.name,
+              streamUrl: item.url,
+              logoUrl: item.logo || null,
+              epgChannelId: (item.tvgId || item.tvgName || null) as any,
+              isActive: true,
+            },
+            select: { id: true },
+          });
+          streamsCreated++;
+          streamId = stream.id;
+        }
+        if (streamId) {
+          await prisma.coreBouquetStream
+            .create({
+              data: { bouquetId, streamId },
+            })
+            .catch(() => {});
+        }
       } catch {
         skipped++;
       }
@@ -482,20 +570,59 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
 
     if (item.type === 'movie') {
       try {
-        const vod = await prisma.coreVodItem.create({
-          data: {
-            ownerId,
-            name: item.name,
-            streamUrl: item.url,
-            posterUrl: item.logo || null,
-            isActive: true,
-          },
-          select: { id: true },
-        });
-        vodCreated++;
-        await prisma.coreBouquetVodItem.create({
-          data: { bouquetId, vodItemId: vod.id },
-        }).catch(() => {});
+        let vodId: string | null = null;
+        if (mode === 'update') {
+          try {
+            const created = await prisma.coreVodItem.create({
+              data: {
+                ownerId,
+                name: item.name,
+                streamUrl: item.url,
+                posterUrl: item.logo || null,
+                isActive: true,
+              },
+              select: { id: true },
+            });
+            vodCreated++;
+            vodId = created.id;
+          } catch (e: any) {
+            if (!isPrismaUniqueError(e)) {
+              throw e;
+            }
+            const existing = await prisma.coreVodItem.findFirst({
+              where: { ownerId, name: item.name },
+              select: { id: true },
+            });
+            if (!existing) throw e;
+            const updated = await prisma.coreVodItem.update({
+              where: { id: existing.id },
+              data: { streamUrl: item.url, posterUrl: item.logo || null, isActive: true },
+              select: { id: true },
+            });
+            vodUpdated++;
+            vodId = updated.id;
+          }
+        } else {
+          const vod = await prisma.coreVodItem.create({
+            data: {
+              ownerId,
+              name: item.name,
+              streamUrl: item.url,
+              posterUrl: item.logo || null,
+              isActive: true,
+            },
+            select: { id: true },
+          });
+          vodCreated++;
+          vodId = vod.id;
+        }
+        if (vodId) {
+          await prisma.coreBouquetVodItem
+            .create({
+              data: { bouquetId, vodItemId: vodId },
+            })
+            .catch(() => {});
+        }
       } catch {
         skipped++;
       }
@@ -526,6 +653,14 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
             select: { id: true },
           });
         }
+      } else if (mode === 'update') {
+        try {
+          await prisma.coreSeries.update({
+            where: { id: seriesRow.id },
+            data: { coverUrl: item.logo || null, isActive: true },
+          });
+          seriesUpdated++;
+        } catch {}
       }
 
       if (!seriesRow) {
@@ -542,7 +677,19 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
         select: { id: true },
       });
       if (existsEp) {
-        skipped++;
+        if (mode === 'update') {
+          try {
+            await prisma.coreSeriesEpisode.update({
+              where: { id: existsEp.id },
+              data: { title, streamUrl: item.url, isActive: true },
+            });
+            episodesUpdated++;
+          } catch {
+            skipped++;
+          }
+        } else {
+          skipped++;
+        }
         continue;
       }
 
@@ -565,28 +712,35 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
 
   let createdPackage: { id: string; name: string } | null = null;
   if (createPackage) {
-    const desiredName = (packageName || 'PACOTE PADRÃO').trim();
-    const existingPkg = await prisma.corePackage.findFirst({
-      where: { ownerId, name: desiredName },
+    const pkgAllName = 'completo';
+    const pkgNoAdultName = 'completo sem adulto';
+
+    const findOrCreate = async (name: string) => {
+      const existing = await prisma.corePackage.findFirst({
+        where: { ownerId, name: { equals: name, mode: 'insensitive' } },
+        select: { id: true, name: true, durationDays: true, connections: true },
+      });
+      if (existing) return existing;
+      return prisma.corePackage.create({
+        data: { ownerId, name, durationDays: 30, connections: 1, priceCents: 0, isActive: true },
+        select: { id: true, name: true, durationDays: true, connections: true },
+      });
+    };
+
+    const [pkgAll, pkgNoAdult] = await Promise.all([findOrCreate(pkgAllName), findOrCreate(pkgNoAdultName)]);
+    createdPackage = { id: pkgAll.id, name: pkgAll.name };
+
+    const ownedBouquetsNow = await prisma.coreBouquet.findMany({
+      where: { ownerId },
       select: { id: true, name: true },
     });
-    if (existingPkg) {
-      createdPackage = existingPkg;
-    } else {
-      createdPackage = await prisma.corePackage.create({
-        data: {
-          ownerId,
-          name: desiredName,
-          durationDays: 30,
-          connections: 1,
-          priceCents: 0,
-          isActive: true,
-        },
-        select: { id: true, name: true },
-      });
-    }
-    if (importedBouquetIds.length) {
-      await syncPackageBouquets(createdPackage.id, importedBouquetIds);
+    const adultIds = new Set(ownedBouquetsNow.filter((b) => isAdultCategoryName(b.name)).map((b) => b.id));
+    const allIds = ownedBouquetsNow.map((b) => b.id);
+    const noAdultIds = ownedBouquetsNow.filter((b) => !adultIds.has(b.id)).map((b) => b.id);
+
+    const shouldUpdateAll = mode === 'replace' || importedBouquetIds.length > 0;
+    if (shouldUpdateAll) {
+      await Promise.all([syncPackageBouquets(pkgAll.id, allIds), syncPackageBouquets(pkgNoAdult.id, noAdultIds)]);
     }
   }
 
@@ -643,10 +797,117 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
   return {
     ok: true,
     stats: parsed.stats,
-    imported: { bouquetsCreated, streamsCreated, vodCreated, seriesCreated, episodesCreated, skipped },
+    imported: {
+      bouquetsCreated,
+      streamsCreated,
+      vodCreated,
+      seriesCreated,
+      episodesCreated,
+      streamsUpdated,
+      vodUpdated,
+      seriesUpdated,
+      episodesUpdated,
+      skipped,
+    },
     createdPackage,
     createdLine,
   };
+}
+
+type CoreM3UImportJobStatus = 'processing' | 'success' | 'error';
+type CoreM3UImportJob = {
+  id: string;
+  ownerId: string;
+  status: CoreM3UImportJobStatus;
+  progress: number;
+  totalItems: number;
+  processedItems: number;
+  currentItem: string | null;
+  startedAt: Date;
+  finishedAt: Date | null;
+  result: any | null;
+  error: string | null;
+};
+
+const coreM3UImportJobs = new Map<string, CoreM3UImportJob>();
+
+function cleanupCoreM3UImportJobs() {
+  const now = Date.now();
+  for (const [id, job] of coreM3UImportJobs.entries()) {
+    const base = job.finishedAt ? job.finishedAt.getTime() : job.startedAt.getTime();
+    if (now - base > 24 * 60 * 60 * 1000) {
+      coreM3UImportJobs.delete(id);
+    }
+  }
+}
+
+function startCoreM3UImportJob(ownerId: string, input: ImportM3UInput) {
+  cleanupCoreM3UImportJobs();
+  const jobId = `core-m3u-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+  const job: CoreM3UImportJob = {
+    id: jobId,
+    ownerId,
+    status: 'processing',
+    progress: 0,
+    totalItems: 0,
+    processedItems: 0,
+    currentItem: 'Iniciando...',
+    startedAt: new Date(),
+    finishedAt: null,
+    result: null,
+    error: null,
+  };
+  coreM3UImportJobs.set(jobId, job);
+
+  setTimeout(() => {
+    void (async () => {
+      try {
+        const parser = new M3UParser();
+        const parsed = await parser.parseFromUrl(input.url, 120000);
+        const wantedTypes = (() => {
+          if (input.type === 'all' || !input.type) return new Set(['live', 'movie', 'series']);
+          if (input.type === 'vod') return new Set(['movie', 'series']);
+          return new Set([input.type]);
+        })();
+        const items = parsed.items.filter((i) => wantedTypes.has(i.type));
+        const totalItems = items.length;
+        const baseJob = coreM3UImportJobs.get(jobId);
+        if (baseJob) {
+          baseJob.totalItems = totalItems;
+          baseJob.currentItem = totalItems ? 'Importando...' : 'Nenhum item encontrado';
+          baseJob.progress = totalItems ? 1 : 100;
+          coreM3UImportJobs.set(jobId, baseJob);
+        }
+
+        let processedItems = 0;
+        const result = await runCoreM3UImport(ownerId, input);
+        processedItems = totalItems;
+
+        const done = coreM3UImportJobs.get(jobId);
+        if (done) {
+          done.status = 'success';
+          done.progress = 100;
+          done.processedItems = processedItems;
+          done.currentItem = 'Concluído';
+          done.finishedAt = new Date();
+          done.result = result;
+          coreM3UImportJobs.set(jobId, done);
+        }
+      } catch (e: any) {
+        const err = coreM3UImportJobs.get(jobId);
+        if (err) {
+          err.status = 'error';
+          err.progress = Math.min(99, Math.max(0, err.progress));
+          err.currentItem = 'Erro';
+          err.finishedAt = new Date();
+          err.error = e?.message ? String(e.message) : 'Erro ao importar';
+          coreM3UImportJobs.set(jobId, err);
+        }
+      }
+    })();
+  }, 10);
+
+  return jobId;
 }
 
 async function syncStreamEdgeServers(streamId: string, desiredServerIds: string[]) {
@@ -3660,6 +3921,11 @@ export const removeSeriesEpisode = asyncHandler(async (req: Request, res: Respon
 export const importM3U = asyncHandler(async (req: Request, res: Response) => {
   const currentUser = req.user!;
   const input = importM3USchema.parse(req.body);
+  if (input.background) {
+    const jobId = startCoreM3UImportJob(currentUser.userId, input);
+    res.json({ ok: true, jobId });
+    return;
+  }
   const result = await runCoreM3UImport(currentUser.userId, input);
   res.json(result);
 });
@@ -3869,8 +4135,31 @@ export const runM3USchedule = asyncHandler(async (req: Request, res: Response) =
   });
   if (!existing) throw new AppError(404, 'Agendamento não encontrado');
 
-  const result = await executeCoreM3USchedule(id, 'manual');
-  res.json({ ok: true, result });
+  void executeCoreM3USchedule(id, 'manual');
+  res.json({ ok: true });
+});
+
+export const getM3UImportJob = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { jobId } = req.params;
+  const job = coreM3UImportJobs.get(jobId);
+  if (!job || job.ownerId !== currentUser.userId) {
+    throw new AppError(404, 'Job não encontrado');
+  }
+  res.json({
+    data: {
+      id: job.id,
+      status: job.status,
+      progress: job.progress,
+      totalItems: job.totalItems,
+      processedItems: job.processedItems,
+      currentItem: job.currentItem,
+      startedAt: job.startedAt,
+      finishedAt: job.finishedAt,
+      result: job.result,
+      error: job.error,
+    },
+  });
 });
 
 export const listPlaybackSessions = asyncHandler(async (req: Request, res: Response) => {

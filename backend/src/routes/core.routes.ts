@@ -57,6 +57,7 @@ import {
   updateSeriesEpisode,
   removeSeriesEpisode,
   importM3U,
+  getM3UImportJob,
   listM3USchedules,
   createM3USchedule,
   updateM3USchedule,
@@ -144,8 +145,13 @@ router.put('/series/episodes/:id', requireBillingValid, updateSeriesEpisode);
 router.delete('/series/episodes/:id', requireBillingValid, removeSeriesEpisode);
 
 router.post('/import/m3u', requireBillingValid, importM3U);
+router.get('/import/m3u/jobs/:jobId', requireBillingValid, getM3UImportJob);
 
 router.get('/schedules', listM3USchedules);
+router.post('/schedules', requireBillingValid, createM3USchedule);
+router.put('/schedules/:id', requireBillingValid, updateM3USchedule);
+router.delete('/schedules/:id', requireBillingValid, deleteM3USchedule);
+router.post('/schedules/:id/run', requireBillingValid, runM3USchedule);
 router.post('/schedules/m3u', requireBillingValid, createM3USchedule);
 router.put('/schedules/m3u/:id', requireBillingValid, updateM3USchedule);
 router.delete('/schedules/m3u/:id', requireBillingValid, deleteM3USchedule);
