@@ -75,6 +75,7 @@ export function LiveImportPage() {
   const [showPreview, setShowPreview] = useState(false);
   const [m3uCategories, setM3uCategories] = useState<M3UCategory[]>([]);
   const [categoryMappings, setCategoryMappings] = useState<Map<string, CategoryMapping>>(new Map());
+  const [categorySearch, setCategorySearch] = useState('');
   
   // Estados de processo
   const [processStatus, setProcessStatus] = useState<'idle' | 'running' | 'completed' | 'error' | 'paused'>('idle');
@@ -200,6 +201,7 @@ export function LiveImportPage() {
       const categories = data.categories || [];
       setM3uCategories(categories);
       setShowPreview(true);
+      setCategorySearch('');
       
       // Resetar estado de processo ao analisar novo M3U
       setProcessStatus('idle');
@@ -371,6 +373,9 @@ export function LiveImportPage() {
   const totalChannelsSelected = m3uCategories
     .filter(cat => categoryMappings.get(cat.name)?.importCategory)
     .reduce((sum, cat) => sum + cat.count, 0);
+  const filteredM3uCategories = m3uCategories.filter((cat) =>
+    cat.name.toLowerCase().includes(categorySearch.trim().toLowerCase())
+  );
 
   return (
     <div className="container mx-auto py-6 px-4 lg:px-6 space-y-6">
@@ -510,9 +515,17 @@ export function LiveImportPage() {
             </Button>
           </div>
 
+          <div className="mb-4">
+            <Input
+              placeholder="Pesquisar categoria..."
+              value={categorySearch}
+              onChange={(e) => setCategorySearch(e.target.value)}
+            />
+          </div>
+
           {/* Lista de Categorias */}
           <div className="space-y-3 max-h-[500px] overflow-y-auto">
-            {m3uCategories.map((cat) => {
+            {filteredM3uCategories.map((cat) => {
               const mapping = categoryMappings.get(cat.name);
               if (!mapping) return null;
 
