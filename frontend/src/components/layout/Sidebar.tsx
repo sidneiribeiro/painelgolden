@@ -105,15 +105,6 @@ const bouquetItems: NavItem[] = [
   { path: '/bouquets', label: 'Gerir Bouquets', icon: Icons.bouquets, key: 'bouquets', roles: ['SUPER_ADMIN', 'ADMIN'] },
 ];
 
-const contentItems: NavItem[] = [
-  { path: '/live/streams', label: 'Streams (Live)', icon: Icons.live, key: 'live', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
-  { path: '/live/import', label: 'Importar Streams', icon: Icons.import, key: 'live', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
-  { path: '/vod', label: 'Filmes / Séries', icon: Icons.vod, key: 'vod', roles: ['SUPER_ADMIN', 'ADMIN'] },
-  { path: '/vod/items', label: 'Itens VOD', icon: Icons.vod, key: 'vod', roles: ['SUPER_ADMIN', 'ADMIN'] },
-  { path: '/vod/import-v2', label: 'Importar VOD', icon: Icons.import, key: 'vod', roles: ['SUPER_ADMIN', 'ADMIN'] },
-  { path: '/vod/schedules', label: 'Agendamentos VOD', icon: Icons.settings, key: 'vod', roles: ['SUPER_ADMIN', 'ADMIN'] },
-];
-
 const managementItems: NavItem[] = [
   { path: '/users', label: 'Usuários', icon: Icons.users, key: 'users', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/settings/access-groups', label: 'Grupos de Acesso', icon: Icons.settings, key: 'access_groups', roles: ['SUPER_ADMIN', 'ADMIN'] },
@@ -255,42 +246,6 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
           <div className="mb-6">
             <p className="text-[10px] uppercase text-zinc-400 dark:text-zinc-500 font-semibold tracking-wider px-4 mb-2">Administração</p>
             {filterByRole(managementItems).map((item) => (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                className={navLinkClass}
-                onClick={handleNavClick}
-              >
-                <span className="text-zinc-500 dark:text-zinc-400">{item.icon}</span>
-                <span className="text-sm">{item.label}</span>
-              </NavLink>
-            ))}
-          </div>
-        )}
-
-        {/* Conteúdos */}
-        {filterByRole(contentItems).length > 0 && (
-          <div className="mb-6">
-            <p className="text-[10px] uppercase text-zinc-400 dark:text-zinc-500 font-semibold tracking-wider px-4 mb-2">Conteúdos</p>
-            {filterByRole(contentItems).map((item) => (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                className={navLinkClass}
-                onClick={handleNavClick}
-              >
-                <span className="text-zinc-500 dark:text-zinc-400">{item.icon}</span>
-                <span className="text-sm">{item.label}</span>
-              </NavLink>
-            ))}
-          </div>
-        )}
-
-        {/* Bouquets */}
-        {filterByRole(bouquetItems).length > 0 && (
-          <div className="mb-6">
-            <p className="text-[10px] uppercase text-zinc-400 dark:text-zinc-500 font-semibold tracking-wider px-4 mb-2">Bouquets</p>
-            {filterByRole(bouquetItems).map((item) => (
               <NavLink
                 key={item.path}
                 to={item.path}
