@@ -6,6 +6,8 @@ import {
   listStreams,
   probeStreamUpstreams,
   bulkApplyEdgeServersToStreams,
+  bulkUpdateCoreStreams,
+  bulkDeleteCoreStreams,
   listEdgeServers,
   getEdgeServersStatus,
   getEdgeServersMetrics,
@@ -52,11 +54,15 @@ import {
   updateVod,
   uploadVodPoster,
   removeVod,
+  bulkUpdateCoreVod,
+  bulkDeleteCoreVod,
   listSeries,
   createSeries,
   updateSeries,
   uploadSeriesCover,
   removeSeries,
+  bulkUpdateCoreSeries,
+  bulkDeleteCoreSeries,
   listSeriesEpisodes,
   createSeriesEpisode,
   updateSeriesEpisode,
@@ -89,6 +95,8 @@ router.use(requireRole('SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'));
 router.get('/streams', listStreams);
 router.get('/streams/:id/probe', requireBillingValid, probeStreamUpstreams);
 router.post('/streams/bulk/apply-servers', requireBillingValid, bulkApplyEdgeServersToStreams);
+router.put('/streams/bulk', requireBillingValid, bulkUpdateCoreStreams);
+router.delete('/streams/bulk', requireBillingValid, bulkDeleteCoreStreams);
 router.post('/streams', requireBillingValid, createStream);
 router.put('/streams/:id', requireBillingValid, updateStream);
 router.post('/streams/:id/logo', requireBillingValid, upload.single('logo'), uploadStreamLogo);
@@ -137,12 +145,16 @@ router.post('/payments/:id/send-confirmed-whatsapp', requireBillingValid, sendCo
 router.post('/payments/:id/recreate-pix', requireBillingValid, recreateCorePaymentPix);
 
 router.get('/vod', listVod);
+router.put('/vod/bulk', requireBillingValid, bulkUpdateCoreVod);
+router.delete('/vod/bulk', requireBillingValid, bulkDeleteCoreVod);
 router.post('/vod', requireBillingValid, createVod);
 router.put('/vod/:id', requireBillingValid, updateVod);
 router.post('/vod/:id/poster', requireBillingValid, upload.single('poster'), uploadVodPoster);
 router.delete('/vod/:id', requireBillingValid, removeVod);
 
 router.get('/series', listSeries);
+router.put('/series/bulk', requireBillingValid, bulkUpdateCoreSeries);
+router.delete('/series/bulk', requireBillingValid, bulkDeleteCoreSeries);
 router.post('/series', requireBillingValid, createSeries);
 router.put('/series/:id', requireBillingValid, updateSeries);
 router.post('/series/:id/cover', requireBillingValid, upload.single('cover'), uploadSeriesCover);

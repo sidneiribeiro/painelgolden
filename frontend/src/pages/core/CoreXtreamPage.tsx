@@ -605,6 +605,23 @@ export function CoreXtreamPage() {
   const [bulkApplyServersModalOpen, setBulkApplyServersModalOpen] = useState(false);
   const [bulkApplyServersMode, setBulkApplyServersMode] = useState<'append' | 'replace'>('append');
   const [bulkApplyServersResult, setBulkApplyServersResult] = useState<CoreBulkApplyServersResponse['data'] | null>(null);
+  const [bulkEditStreamsModalOpen, setBulkEditStreamsModalOpen] = useState(false);
+  const [bulkDeleteStreamsModalOpen, setBulkDeleteStreamsModalOpen] = useState(false);
+  const [bulkStreamForm, setBulkStreamForm] = useState({
+    status: 'keep' as 'keep' | 'active' | 'inactive',
+    catchup: 'keep' as 'keep' | 'on' | 'off',
+    catchupDays: '',
+  });
+
+  const [selectedVodIds, setSelectedVodIds] = useState<string[]>([]);
+  const [bulkEditVodModalOpen, setBulkEditVodModalOpen] = useState(false);
+  const [bulkDeleteVodModalOpen, setBulkDeleteVodModalOpen] = useState(false);
+  const [bulkVodStatus, setBulkVodStatus] = useState<'keep' | 'active' | 'inactive'>('keep');
+
+  const [selectedSeriesIds, setSelectedSeriesIds] = useState<string[]>([]);
+  const [bulkEditSeriesModalOpen, setBulkEditSeriesModalOpen] = useState(false);
+  const [bulkDeleteSeriesModalOpen, setBulkDeleteSeriesModalOpen] = useState(false);
+  const [bulkSeriesStatus, setBulkSeriesStatus] = useState<'keep' | 'active' | 'inactive'>('keep');
 
   const [edgeJobId, setEdgeJobId] = useState<string | null>(null);
   const [edgeJobStatus, setEdgeJobStatus] = useState<string | null>(null);
@@ -1523,6 +1540,40 @@ export function CoreXtreamPage() {
     },
   });
 
+  const bulkUpdateStreamsMutation = useMutation({
+    mutationFn: async (payload: { streamIds: string[]; isActive?: boolean; tvArchive?: boolean; tvArchiveDuration?: number }) => {
+      const res = await api.put('/core/streams/bulk', payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['core-streams'] });
+      queryClient.invalidateQueries({ queryKey: ['core-bouquets'] });
+      toast.success('Atualização em massa concluída');
+      setSelectedStreamIds([]);
+      setBulkEditStreamsModalOpen(false);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao atualizar em massa');
+    },
+  });
+
+  const bulkDeleteStreamsMutation = useMutation({
+    mutationFn: async (payload: { streamIds: string[] }) => {
+      const res = await api.delete('/core/streams/bulk', { data: payload });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['core-streams'] });
+      queryClient.invalidateQueries({ queryKey: ['core-bouquets'] });
+      toast.success('Streams removidas');
+      setSelectedStreamIds([]);
+      setBulkDeleteStreamsModalOpen(false);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao remover em massa');
+    },
+  });
+
   const createServerMutation = useMutation({
     mutationFn: async () => {
       const payload: any = {
@@ -1968,6 +2019,38 @@ export function CoreXtreamPage() {
     },
   });
 
+  const bulkUpdateVodMutation = useMutation({
+    mutationFn: async (payload: { vodIds: string[]; isActive?: boolean }) => {
+      const res = await api.put('/core/vod/bulk', payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['core-vod'] });
+      toast.success('Atualização em massa concluída');
+      setSelectedVodIds([]);
+      setBulkEditVodModalOpen(false);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao atualizar em massa');
+    },
+  });
+
+  const bulkDeleteVodMutation = useMutation({
+    mutationFn: async (payload: { vodIds: string[] }) => {
+      const res = await api.delete('/core/vod/bulk', { data: payload });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['core-vod'] });
+      toast.success('Filmes removidos');
+      setSelectedVodIds([]);
+      setBulkDeleteVodModalOpen(false);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao remover em massa');
+    },
+  });
+
   const createSeriesMutation = useMutation({
     mutationFn: async () => {
       const payload: any = {
@@ -2044,6 +2127,39 @@ export function CoreXtreamPage() {
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error || 'Erro ao remover série');
+    },
+  });
+
+  const bulkUpdateSeriesMutation = useMutation({
+    mutationFn: async (payload: { seriesIds: string[]; isActive?: boolean }) => {
+      const res = await api.put('/core/series/bulk', payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['core-series'] });
+      toast.success('Atualização em massa concluída');
+      setSelectedSeriesIds([]);
+      setBulkEditSeriesModalOpen(false);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao atualizar em massa');
+    },
+  });
+
+  const bulkDeleteSeriesMutation = useMutation({
+    mutationFn: async (payload: { seriesIds: string[] }) => {
+      const res = await api.delete('/core/series/bulk', { data: payload });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['core-series'] });
+      queryClient.invalidateQueries({ queryKey: ['core-series-episodes'] });
+      toast.success('Séries removidas');
+      setSelectedSeriesIds([]);
+      setBulkDeleteSeriesModalOpen(false);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao remover em massa');
     },
   });
 
@@ -4544,14 +4660,53 @@ export function CoreXtreamPage() {
 
       {tab === 'vod' ? (
         <Card>
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Filmes</h3>
-            <Button onClick={openCreateVod} disabled={isBillingBlocked}>Novo Filme</Button>
+            <div className="flex items-center gap-2">
+              <div className="text-sm text-zinc-600 dark:text-zinc-400">{vodItems.length} registro(s)</div>
+              {selectedVodIds.length ? (
+                <div className="text-sm text-zinc-600 dark:text-zinc-400">{selectedVodIds.length} selecionado(s)</div>
+              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isBillingBlocked || selectedVodIds.length === 0}
+                onClick={() => {
+                  setBulkVodStatus('keep');
+                  setBulkEditVodModalOpen(true);
+                }}
+              >
+                Editar em massa
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={isBillingBlocked || selectedVodIds.length === 0}
+                onClick={() => setBulkDeleteVodModalOpen(true)}
+              >
+                Apagar em massa
+              </Button>
+              <Button variant="outline" size="sm" disabled={selectedVodIds.length === 0} onClick={() => setSelectedVodIds([])}>
+                Limpar
+              </Button>
+              <Button onClick={openCreateVod} disabled={isBillingBlocked}>Novo Filme</Button>
+            </div>
           </div>
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-zinc-600 dark:text-zinc-400">
+                  <th className="py-2 pr-4">
+                    <input
+                      type="checkbox"
+                      checked={vodItems.length > 0 && vodItems.every((v) => selectedVodIds.includes(v.id))}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        if (checked) setSelectedVodIds(vodItems.map((v) => v.id));
+                        else setSelectedVodIds([]);
+                      }}
+                    />
+                  </th>
                   <th className="py-2 pr-4">Nome</th>
                   <th className="py-2 pr-4">Status</th>
                   <th className="py-2 pr-4">Capa</th>
@@ -4563,6 +4718,19 @@ export function CoreXtreamPage() {
               <tbody>
                 {vodItems.map((v) => (
                   <tr key={v.id} className="border-t border-zinc-200/70 dark:border-zinc-800/70">
+                    <td className="py-3 pr-4">
+                      <input
+                        type="checkbox"
+                        checked={selectedVodIds.includes(v.id)}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setSelectedVodIds((prev) => {
+                            if (checked) return prev.includes(v.id) ? prev : [...prev, v.id];
+                            return prev.filter((id) => id !== v.id);
+                          });
+                        }}
+                      />
+                    </td>
                     <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-white">{v.name}</td>
                     <td className="py-3 pr-4">
                       <Badge variant={v.isActive ? 'success' : 'warning'}>{v.isActive ? 'ATIVO' : 'INATIVO'}</Badge>
@@ -4605,7 +4773,7 @@ export function CoreXtreamPage() {
                 ))}
                 {vodItems.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
+                    <td colSpan={7} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
                       Nenhum filme cadastrado ainda
                     </td>
                   </tr>
@@ -4618,14 +4786,53 @@ export function CoreXtreamPage() {
 
       {tab === 'series' ? (
         <Card>
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Séries</h3>
-            <Button onClick={openCreateSeries} disabled={isBillingBlocked}>Nova Série</Button>
+            <div className="flex items-center gap-2">
+              <div className="text-sm text-zinc-600 dark:text-zinc-400">{series.length} registro(s)</div>
+              {selectedSeriesIds.length ? (
+                <div className="text-sm text-zinc-600 dark:text-zinc-400">{selectedSeriesIds.length} selecionado(s)</div>
+              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isBillingBlocked || selectedSeriesIds.length === 0}
+                onClick={() => {
+                  setBulkSeriesStatus('keep');
+                  setBulkEditSeriesModalOpen(true);
+                }}
+              >
+                Editar em massa
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={isBillingBlocked || selectedSeriesIds.length === 0}
+                onClick={() => setBulkDeleteSeriesModalOpen(true)}
+              >
+                Apagar em massa
+              </Button>
+              <Button variant="outline" size="sm" disabled={selectedSeriesIds.length === 0} onClick={() => setSelectedSeriesIds([])}>
+                Limpar
+              </Button>
+              <Button onClick={openCreateSeries} disabled={isBillingBlocked}>Nova Série</Button>
+            </div>
           </div>
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-zinc-600 dark:text-zinc-400">
+                  <th className="py-2 pr-4">
+                    <input
+                      type="checkbox"
+                      checked={series.length > 0 && series.every((s) => selectedSeriesIds.includes(s.id))}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        if (checked) setSelectedSeriesIds(series.map((s) => s.id));
+                        else setSelectedSeriesIds([]);
+                      }}
+                    />
+                  </th>
                   <th className="py-2 pr-4">Nome</th>
                   <th className="py-2 pr-4">Status</th>
                   <th className="py-2 pr-4">Capa</th>
@@ -4637,6 +4844,19 @@ export function CoreXtreamPage() {
               <tbody>
                 {series.map((s) => (
                   <tr key={s.id} className="border-t border-zinc-200/70 dark:border-zinc-800/70">
+                    <td className="py-3 pr-4">
+                      <input
+                        type="checkbox"
+                        checked={selectedSeriesIds.includes(s.id)}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setSelectedSeriesIds((prev) => {
+                            if (checked) return prev.includes(s.id) ? prev : [...prev, s.id];
+                            return prev.filter((id) => id !== s.id);
+                          });
+                        }}
+                      />
+                    </td>
                     <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-white">{s.name}</td>
                     <td className="py-3 pr-4">
                       <Badge variant={s.isActive ? 'success' : 'warning'}>{s.isActive ? 'ATIVO' : 'INATIVO'}</Badge>
@@ -4680,7 +4900,7 @@ export function CoreXtreamPage() {
                 ))}
                 {series.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
+                    <td colSpan={7} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
                       Nenhuma série criada ainda
                     </td>
                   </tr>
@@ -4718,6 +4938,25 @@ export function CoreXtreamPage() {
                 }}
               >
                 Aplicar servidores
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isBillingBlocked || selectedStreamIds.length === 0}
+                onClick={() => {
+                  setBulkStreamForm({ status: 'keep', catchup: 'keep', catchupDays: '' });
+                  setBulkEditStreamsModalOpen(true);
+                }}
+              >
+                Editar em massa
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={isBillingBlocked || selectedStreamIds.length === 0}
+                onClick={() => setBulkDeleteStreamsModalOpen(true)}
+              >
+                Apagar em massa
               </Button>
               <Button variant="outline" size="sm" disabled={selectedStreamIds.length === 0} onClick={() => setSelectedStreamIds([])}>
                 Limpar
@@ -7244,6 +7483,231 @@ export function CoreXtreamPage() {
               onClick={() => bulkApplyServersMutation.mutate({ streamIds: selectedStreamIds, mode: bulkApplyServersMode })}
             >
               Aplicar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={bulkEditStreamsModalOpen}
+        onClose={() => setBulkEditStreamsModalOpen(false)}
+        title="Editar Streams em Massa"
+        size="lg"
+      >
+        <div className="space-y-4">
+          <div className="text-sm text-zinc-600 dark:text-zinc-400">
+            Selecionadas: <span className="font-medium text-zinc-900 dark:text-white">{selectedStreamIds.length}</span>
+          </div>
+          <Select
+            label="Status"
+            value={bulkStreamForm.status}
+            onChange={(e) => setBulkStreamForm((p) => ({ ...p, status: e.target.value as any }))}
+          >
+            <option value="keep">Não alterar</option>
+            <option value="active">Ativar</option>
+            <option value="inactive">Desativar</option>
+          </Select>
+          <Select
+            label="Catchup"
+            value={bulkStreamForm.catchup}
+            onChange={(e) => setBulkStreamForm((p) => ({ ...p, catchup: e.target.value as any }))}
+          >
+            <option value="keep">Não alterar</option>
+            <option value="on">Ativar</option>
+            <option value="off">Desativar</option>
+          </Select>
+          <Input
+            label="Dias de Catchup"
+            type="number"
+            value={bulkStreamForm.catchupDays}
+            onChange={(e) => setBulkStreamForm((p) => ({ ...p, catchupDays: e.target.value }))}
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setBulkEditStreamsModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              disabled={isBillingBlocked || bulkUpdateStreamsMutation.isPending || selectedStreamIds.length === 0}
+              loading={bulkUpdateStreamsMutation.isPending}
+              onClick={() => {
+                const payload: any = { streamIds: selectedStreamIds };
+                if (bulkStreamForm.status === 'active') payload.isActive = true;
+                if (bulkStreamForm.status === 'inactive') payload.isActive = false;
+                if (bulkStreamForm.catchup === 'on') payload.tvArchive = true;
+                if (bulkStreamForm.catchup === 'off') payload.tvArchive = false;
+
+                if (bulkStreamForm.catchup === 'on') {
+                  const days = parseInt(String(bulkStreamForm.catchupDays || '').trim() || '0', 10);
+                  if (Number.isFinite(days) && days >= 0) payload.tvArchiveDuration = days;
+                }
+                if (bulkStreamForm.catchup === 'off') {
+                  payload.tvArchiveDuration = 0;
+                }
+
+                if (payload.isActive === undefined && payload.tvArchive === undefined && payload.tvArchiveDuration === undefined) {
+                  toast.error('Selecione pelo menos 1 campo para alterar');
+                  return;
+                }
+                bulkUpdateStreamsMutation.mutate(payload);
+              }}
+            >
+              Aplicar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={bulkDeleteStreamsModalOpen}
+        onClose={() => setBulkDeleteStreamsModalOpen(false)}
+        title="Apagar Streams em Massa"
+        size="lg"
+      >
+        <div className="space-y-4">
+          <div className="text-sm text-zinc-600 dark:text-zinc-400">
+            Remover <span className="font-medium text-zinc-900 dark:text-white">{selectedStreamIds.length}</span> stream(s).
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setBulkDeleteStreamsModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="danger"
+              disabled={isBillingBlocked || bulkDeleteStreamsMutation.isPending || selectedStreamIds.length === 0}
+              loading={bulkDeleteStreamsMutation.isPending}
+              onClick={() => bulkDeleteStreamsMutation.mutate({ streamIds: selectedStreamIds })}
+            >
+              Apagar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={bulkEditVodModalOpen}
+        onClose={() => setBulkEditVodModalOpen(false)}
+        title="Editar Filmes em Massa"
+        size="lg"
+      >
+        <div className="space-y-4">
+          <div className="text-sm text-zinc-600 dark:text-zinc-400">
+            Selecionados: <span className="font-medium text-zinc-900 dark:text-white">{selectedVodIds.length}</span>
+          </div>
+          <Select label="Status" value={bulkVodStatus} onChange={(e) => setBulkVodStatus(e.target.value as any)}>
+            <option value="keep">Não alterar</option>
+            <option value="active">Ativar</option>
+            <option value="inactive">Desativar</option>
+          </Select>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setBulkEditVodModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              disabled={isBillingBlocked || bulkUpdateVodMutation.isPending || selectedVodIds.length === 0}
+              loading={bulkUpdateVodMutation.isPending}
+              onClick={() => {
+                const payload: any = { vodIds: selectedVodIds };
+                if (bulkVodStatus === 'active') payload.isActive = true;
+                if (bulkVodStatus === 'inactive') payload.isActive = false;
+                if (payload.isActive === undefined) {
+                  toast.error('Selecione pelo menos 1 campo para alterar');
+                  return;
+                }
+                bulkUpdateVodMutation.mutate(payload);
+              }}
+            >
+              Aplicar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={bulkDeleteVodModalOpen}
+        onClose={() => setBulkDeleteVodModalOpen(false)}
+        title="Apagar Filmes em Massa"
+        size="lg"
+      >
+        <div className="space-y-4">
+          <div className="text-sm text-zinc-600 dark:text-zinc-400">
+            Remover <span className="font-medium text-zinc-900 dark:text-white">{selectedVodIds.length}</span> filme(s).
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setBulkDeleteVodModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="danger"
+              disabled={isBillingBlocked || bulkDeleteVodMutation.isPending || selectedVodIds.length === 0}
+              loading={bulkDeleteVodMutation.isPending}
+              onClick={() => bulkDeleteVodMutation.mutate({ vodIds: selectedVodIds })}
+            >
+              Apagar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={bulkEditSeriesModalOpen}
+        onClose={() => setBulkEditSeriesModalOpen(false)}
+        title="Editar Séries em Massa"
+        size="lg"
+      >
+        <div className="space-y-4">
+          <div className="text-sm text-zinc-600 dark:text-zinc-400">
+            Selecionadas: <span className="font-medium text-zinc-900 dark:text-white">{selectedSeriesIds.length}</span>
+          </div>
+          <Select label="Status" value={bulkSeriesStatus} onChange={(e) => setBulkSeriesStatus(e.target.value as any)}>
+            <option value="keep">Não alterar</option>
+            <option value="active">Ativar</option>
+            <option value="inactive">Desativar</option>
+          </Select>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setBulkEditSeriesModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              disabled={isBillingBlocked || bulkUpdateSeriesMutation.isPending || selectedSeriesIds.length === 0}
+              loading={bulkUpdateSeriesMutation.isPending}
+              onClick={() => {
+                const payload: any = { seriesIds: selectedSeriesIds };
+                if (bulkSeriesStatus === 'active') payload.isActive = true;
+                if (bulkSeriesStatus === 'inactive') payload.isActive = false;
+                if (payload.isActive === undefined) {
+                  toast.error('Selecione pelo menos 1 campo para alterar');
+                  return;
+                }
+                bulkUpdateSeriesMutation.mutate(payload);
+              }}
+            >
+              Aplicar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={bulkDeleteSeriesModalOpen}
+        onClose={() => setBulkDeleteSeriesModalOpen(false)}
+        title="Apagar Séries em Massa"
+        size="lg"
+      >
+        <div className="space-y-4">
+          <div className="text-sm text-zinc-600 dark:text-zinc-400">
+            Remover <span className="font-medium text-zinc-900 dark:text-white">{selectedSeriesIds.length}</span> série(s).
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setBulkDeleteSeriesModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="danger"
+              disabled={isBillingBlocked || bulkDeleteSeriesMutation.isPending || selectedSeriesIds.length === 0}
+              loading={bulkDeleteSeriesMutation.isPending}
+              onClick={() => bulkDeleteSeriesMutation.mutate({ seriesIds: selectedSeriesIds })}
+            >
+              Apagar
             </Button>
           </div>
         </div>

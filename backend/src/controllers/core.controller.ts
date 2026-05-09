@@ -1402,6 +1402,47 @@ export const bulkApplyEdgeServersToStreams = asyncHandler(async (req: Request, r
   });
 });
 
+export const bulkUpdateCoreStreams = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { streamIds, isActive, tvArchive, tvArchiveDuration } = z
+    .object({
+      streamIds: z.array(z.string().uuid()).min(1).max(500),
+      isActive: z.boolean().optional(),
+      tvArchive: z.boolean().optional(),
+      tvArchiveDuration: z.number().int().min(0).max(3650).optional(),
+    })
+    .parse(req.body);
+
+  const data: any = {};
+  if (isActive !== undefined) data.isActive = isActive;
+  if (tvArchive !== undefined) data.tvArchive = tvArchive;
+  if (tvArchiveDuration !== undefined) data.tvArchiveDuration = tvArchiveDuration;
+
+  if (!Object.keys(data).length) throw new AppError(400, 'Nenhum campo para atualizar');
+
+  const result = await prisma.coreStream.updateMany({
+    where: { id: { in: streamIds }, ...coreOwnerWhere(currentUser) },
+    data,
+  });
+
+  res.json({ ok: true, updated: result.count });
+});
+
+export const bulkDeleteCoreStreams = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { streamIds } = z
+    .object({
+      streamIds: z.array(z.string().uuid()).min(1).max(500),
+    })
+    .parse(req.body);
+
+  const result = await prisma.coreStream.deleteMany({
+    where: { id: { in: streamIds }, ...coreOwnerWhere(currentUser) },
+  });
+
+  res.json({ ok: true, deleted: result.count });
+});
+
 export const listEdgeServers = asyncHandler(async (req: Request, res: Response) => {
   const currentUser = req.user!;
 
@@ -4145,6 +4186,42 @@ export const removeVod = asyncHandler(async (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+export const bulkUpdateCoreVod = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { vodIds, isActive } = z
+    .object({
+      vodIds: z.array(z.string().uuid()).min(1).max(500),
+      isActive: z.boolean().optional(),
+    })
+    .parse(req.body);
+
+  const data: any = {};
+  if (isActive !== undefined) data.isActive = isActive;
+  if (!Object.keys(data).length) throw new AppError(400, 'Nenhum campo para atualizar');
+
+  const result = await prisma.coreVodItem.updateMany({
+    where: { id: { in: vodIds }, ...coreOwnerWhere(currentUser) },
+    data,
+  });
+
+  res.json({ ok: true, updated: result.count });
+});
+
+export const bulkDeleteCoreVod = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { vodIds } = z
+    .object({
+      vodIds: z.array(z.string().uuid()).min(1).max(500),
+    })
+    .parse(req.body);
+
+  const result = await prisma.coreVodItem.deleteMany({
+    where: { id: { in: vodIds }, ...coreOwnerWhere(currentUser) },
+  });
+
+  res.json({ ok: true, deleted: result.count });
+});
+
 export const listSeries = asyncHandler(async (req: Request, res: Response) => {
   const currentUser = req.user!;
 
@@ -4171,6 +4248,42 @@ export const listSeries = asyncHandler(async (req: Request, res: Response) => {
       bouquetIds: bySeries[s.id] || [],
     })),
   });
+});
+
+export const bulkUpdateCoreSeries = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { seriesIds, isActive } = z
+    .object({
+      seriesIds: z.array(z.string().uuid()).min(1).max(500),
+      isActive: z.boolean().optional(),
+    })
+    .parse(req.body);
+
+  const data: any = {};
+  if (isActive !== undefined) data.isActive = isActive;
+  if (!Object.keys(data).length) throw new AppError(400, 'Nenhum campo para atualizar');
+
+  const result = await prisma.coreSeries.updateMany({
+    where: { id: { in: seriesIds }, ...coreOwnerWhere(currentUser) },
+    data,
+  });
+
+  res.json({ ok: true, updated: result.count });
+});
+
+export const bulkDeleteCoreSeries = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { seriesIds } = z
+    .object({
+      seriesIds: z.array(z.string().uuid()).min(1).max(500),
+    })
+    .parse(req.body);
+
+  const result = await prisma.coreSeries.deleteMany({
+    where: { id: { in: seriesIds }, ...coreOwnerWhere(currentUser) },
+  });
+
+  res.json({ ok: true, deleted: result.count });
 });
 
 export const createSeries = asyncHandler(async (req: Request, res: Response) => {
