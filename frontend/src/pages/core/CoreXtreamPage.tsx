@@ -1536,6 +1536,7 @@ export function CoreXtreamPage() {
     onSuccess: (result: any) => {
       toast.success('Linha criada');
       queryClient.invalidateQueries({ queryKey: ['core-lines'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       setLineModalOpen(false);
 
       const createdLine = (result?.data || null) as CoreLine | null;
@@ -1571,6 +1572,7 @@ export function CoreXtreamPage() {
     onSuccess: () => {
       toast.success('Linha atualizada');
       queryClient.invalidateQueries({ queryKey: ['core-lines'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       setLineModalOpen(false);
       if (editingLine?.id && lineForm.password) {
         linePasswordCacheRef.current.set(editingLine.id, String(lineForm.password));
@@ -1607,6 +1609,7 @@ export function CoreXtreamPage() {
     onSuccess: () => {
       toast.success('Linha removida');
       queryClient.invalidateQueries({ queryKey: ['core-lines'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error || 'Erro ao remover linha');

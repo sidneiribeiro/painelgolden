@@ -36,33 +36,51 @@ export const getDashboard = asyncHandler(async (req: Request, res: Response) => 
     }
   });
 
-  // Calcular estatísticas baseado no banco local
+  const coreLines = await prisma.coreLine
+    .findMany({
+      where: coreOwnerWhere,
+      select: { id: true, username: true, status: true, expiresAt: true, createdAt: true },
+      orderBy: [{ createdAt: 'desc' }],
+    })
+    .catch(() => [] as Array<{ id: string; username: string; status: string; expiresAt: Date; createdAt: Date }>);
+
+  const unifiedLines = [
+    ...allCustomers.map((c) => ({
+      id: c.id,
+      username: c.username,
+      status: c.status,
+      expiresAt: c.expiresAt || now,
+      createdAt: c.createdAt,
+      isTrial: !!c.isTrial,
+    })),
+    ...coreLines.map((l) => {
+      const expired = l.expiresAt && l.expiresAt <= now;
+      const mappedStatus = expired ? 'EXPIRED' : l.status === 'ACTIVE' ? 'ACTIVE' : 'DISABLED';
+      return {
+        id: l.id,
+        username: l.username,
+        status: mappedStatus,
+        expiresAt: l.expiresAt || now,
+        createdAt: l.createdAt,
+        isTrial: false,
+      };
+    }),
+  ];
+
+  // Calcular estatísticas baseado no banco local (Clientes XUI + Linhas Core)
   const stats = {
-    total_lines: allCustomers.length,
-    active_lines: allCustomers.filter((c) => {
-      return c.status === 'ACTIVE' && c.expiresAt && c.expiresAt > now;
-    }).length,
-    expired_lines: allCustomers.filter((c) => {
-      return c.status === 'EXPIRED' || (c.expiresAt && c.expiresAt <= now);
-    }).length,
+    total_lines: unifiedLines.length,
+    active_lines: unifiedLines.filter((c) => c.status === 'ACTIVE' && c.expiresAt && c.expiresAt > now).length,
+    expired_lines: unifiedLines.filter((c) => c.status === 'EXPIRED' || (c.expiresAt && c.expiresAt <= now)).length,
     online_lines: 0, // Pode ser implementado depois com conexões ao vivo
     offline_lines: 0, // Pode ser implementado depois
-    trials_today: allCustomers.filter((c) => {
-      return c.isTrial && c.createdAt && c.createdAt >= startOfToday;
-    }).length,
-    expiring_soon: allCustomers.filter((c) => {
-      return (
-        c.status === 'ACTIVE' &&
-        c.expiresAt &&
-        c.expiresAt > now &&
-        c.expiresAt <= sevenDaysFromNow
-      );
-    }).length,
-    banned_lines: allCustomers.filter((c) => c.status === 'BANNED').length,
+    trials_today: unifiedLines.filter((c) => c.isTrial && c.createdAt && c.createdAt >= startOfToday).length,
+    expiring_soon: unifiedLines.filter((c) => c.status === 'ACTIVE' && c.expiresAt && c.expiresAt > now && c.expiresAt <= sevenDaysFromNow).length,
+    banned_lines: unifiedLines.filter((c) => c.status === 'BANNED' || c.status === 'DISABLED').length,
   };
 
-  // Clientes recentes (últimos 10)
-  const recentCustomers = allCustomers
+  // Clientes recentes (últimos 10) - unificado
+  const recentCustomers = unifiedLines
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
     .slice(0, 10)
     .map((c) => {
@@ -73,21 +91,14 @@ export const getDashboard = asyncHandler(async (req: Request, res: Response) => 
         id: c.id,
         username: c.username,
         status: c.status,
-        expires_at: c.expiresAt ? c.expiresAt.toISOString() : new Date().toISOString(),
+        expires_at: c.expiresAt ? c.expiresAt.toISOString() : now.toISOString(),
         days_until_expiry: daysUntilExpiry,
       };
     });
 
-  // Clientes vencendo em breve (próximos 7 dias)
-  const expiringCustomers = allCustomers
-    .filter((c) => {
-      return (
-        c.status === 'ACTIVE' &&
-        c.expiresAt &&
-        c.expiresAt > now &&
-        c.expiresAt <= sevenDaysFromNow
-      );
-    })
+  // Clientes vencendo em breve (próximos 7 dias) - unificado
+  const expiringCustomers = unifiedLines
+    .filter((c) => c.status === 'ACTIVE' && c.expiresAt && c.expiresAt > now && c.expiresAt <= sevenDaysFromNow)
     .sort((a, b) => {
       const aExp = a.expiresAt ? a.expiresAt.getTime() : 0;
       const bExp = b.expiresAt ? b.expiresAt.getTime() : 0;
@@ -101,7 +112,7 @@ export const getDashboard = asyncHandler(async (req: Request, res: Response) => 
       return {
         id: c.id,
         username: c.username,
-        expires_at: c.expiresAt ? c.expiresAt.toISOString() : new Date().toISOString(),
+        expires_at: c.expiresAt ? c.expiresAt.toISOString() : now.toISOString(),
         days_until_expiry: daysUntilExpiry,
       };
     });
