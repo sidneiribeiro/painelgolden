@@ -37,6 +37,13 @@ type CoreStream = {
   createdAt: string;
 };
 
+type CorePagination = {
+  page: number;
+  perPage: number;
+  total: number;
+  totalPages: number;
+};
+
 type CoreEdgeServer = {
   id: string;
   name: string;
@@ -623,6 +630,19 @@ export function CoreXtreamPage() {
   const [bulkDeleteSeriesModalOpen, setBulkDeleteSeriesModalOpen] = useState(false);
   const [bulkSeriesStatus, setBulkSeriesStatus] = useState<'keep' | 'active' | 'inactive'>('keep');
 
+  const perPageOptions = useMemo(() => [10, 20, 50, 100, 200, 500, 1000], []);
+  const [streamsPage, setStreamsPage] = useState(1);
+  const [streamsPerPage, setStreamsPerPage] = useState(50);
+  const [streamsBouquetId, setStreamsBouquetId] = useState('');
+
+  const [vodPage, setVodPage] = useState(1);
+  const [vodPerPage, setVodPerPage] = useState(50);
+  const [vodBouquetId, setVodBouquetId] = useState('');
+
+  const [seriesPage, setSeriesPage] = useState(1);
+  const [seriesPerPage, setSeriesPerPage] = useState(50);
+  const [seriesBouquetId, setSeriesBouquetId] = useState('');
+
   const [edgeJobId, setEdgeJobId] = useState<string | null>(null);
   const [edgeJobStatus, setEdgeJobStatus] = useState<string | null>(null);
   const [edgeJobLogs, setEdgeJobLogs] = useState<string[]>([]);
@@ -874,10 +894,19 @@ export function CoreXtreamPage() {
     isActive: true,
   });
 
-  const { data: streamsData, isLoading: streamsLoading } = useQuery<{ data: CoreStream[] }>({
-    queryKey: ['core-streams'],
+  const streamsQueryParams = useMemo(() => {
+    const page = tab === 'overview' ? 1 : streamsPage;
+    const perPage = tab === 'overview' ? 10 : streamsPerPage;
+    const bouquetId = tab === 'overview' ? '' : streamsBouquetId;
+    return { page, perPage, bouquetId };
+  }, [tab, streamsPage, streamsPerPage, streamsBouquetId]);
+
+  const { data: streamsData, isLoading: streamsLoading } = useQuery<{ data: CoreStream[]; pagination?: CorePagination }>({
+    queryKey: ['core-streams', streamsQueryParams.page, streamsQueryParams.perPage, streamsQueryParams.bouquetId],
     queryFn: async () => {
-      const res = await api.get('/core/streams');
+      const params: any = { page: streamsQueryParams.page, perPage: streamsQueryParams.perPage };
+      if (streamsQueryParams.bouquetId) params.bouquetId = streamsQueryParams.bouquetId;
+      const res = await api.get('/core/streams', { params });
       return res.data;
     },
   });
@@ -1007,20 +1036,40 @@ export function CoreXtreamPage() {
     },
   });
 
-  const { data: vodData, isLoading: vodLoading } = useQuery<{ data: CoreVodItem[] }>({
-    queryKey: ['core-vod'],
+  const vodQueryParams = useMemo(() => {
+    const page = tab === 'overview' ? 1 : vodPage;
+    const perPage = tab === 'overview' ? 10 : vodPerPage;
+    const bouquetId = tab === 'overview' ? '' : vodBouquetId;
+    return { page, perPage, bouquetId };
+  }, [tab, vodPage, vodPerPage, vodBouquetId]);
+
+  const { data: vodData, isLoading: vodLoading } = useQuery<{ data: CoreVodItem[]; pagination?: CorePagination }>({
+    queryKey: ['core-vod', vodQueryParams.page, vodQueryParams.perPage, vodQueryParams.bouquetId],
     queryFn: async () => {
-      const res = await api.get('/core/vod');
+      const params: any = { page: vodQueryParams.page, perPage: vodQueryParams.perPage };
+      if (vodQueryParams.bouquetId) params.bouquetId = vodQueryParams.bouquetId;
+      const res = await api.get('/core/vod', { params });
       return res.data;
     },
+    enabled: tab === 'vod' || tab === 'overview',
   });
 
-  const { data: seriesData, isLoading: seriesLoading } = useQuery<{ data: CoreSeries[] }>({
-    queryKey: ['core-series'],
+  const seriesQueryParams = useMemo(() => {
+    const page = tab === 'overview' ? 1 : seriesPage;
+    const perPage = tab === 'overview' ? 10 : seriesPerPage;
+    const bouquetId = tab === 'overview' ? '' : seriesBouquetId;
+    return { page, perPage, bouquetId };
+  }, [tab, seriesPage, seriesPerPage, seriesBouquetId]);
+
+  const { data: seriesData, isLoading: seriesLoading } = useQuery<{ data: CoreSeries[]; pagination?: CorePagination }>({
+    queryKey: ['core-series', seriesQueryParams.page, seriesQueryParams.perPage, seriesQueryParams.bouquetId],
     queryFn: async () => {
-      const res = await api.get('/core/series');
+      const params: any = { page: seriesQueryParams.page, perPage: seriesQueryParams.perPage };
+      if (seriesQueryParams.bouquetId) params.bouquetId = seriesQueryParams.bouquetId;
+      const res = await api.get('/core/series', { params });
       return res.data;
     },
+    enabled: tab === 'series' || tab === 'overview',
   });
 
   const { data: episodesData, isLoading: episodesLoading } = useQuery<{ data: CoreSeriesEpisode[] }>({
@@ -1151,12 +1200,30 @@ export function CoreXtreamPage() {
   });
 
   const streams = streamsData?.data || [];
+  const streamsPagination: CorePagination = (streamsData as any)?.pagination || {
+    page: streamsQueryParams.page,
+    perPage: streamsQueryParams.perPage,
+    total: streams.length,
+    totalPages: 1,
+  };
   const servers = serversData?.data || [];
   const bouquets = bouquetsData?.data || [];
   const packages = packagesData?.data || [];
   const lines = linesData?.data || [];
   const vodItems = vodData?.data || [];
+  const vodPagination: CorePagination = (vodData as any)?.pagination || {
+    page: vodQueryParams.page,
+    perPage: vodQueryParams.perPage,
+    total: vodItems.length,
+    totalPages: 1,
+  };
   const series = seriesData?.data || [];
+  const seriesPagination: CorePagination = (seriesData as any)?.pagination || {
+    page: seriesQueryParams.page,
+    perPage: seriesQueryParams.perPage,
+    total: series.length,
+    totalPages: 1,
+  };
   const episodes = episodesData?.data || [];
   const schedules = schedulesData?.data || [];
   const epgSources = epgSourcesData?.data || [];
@@ -1167,9 +1234,9 @@ export function CoreXtreamPage() {
   const paymentsList = useMemo(() => paymentsInfiniteData?.pages.flatMap((p) => p.data) || [], [paymentsInfiniteData]);
 
   const overviewCounts = useMemo(() => {
-    const activeStreams = streams.filter((s) => s.isActive).length;
-    const activeVod = vodItems.filter((v) => v.isActive).length;
-    const activeSeries = series.filter((s) => s.isActive).length;
+    const activeStreams = streamsPagination.total;
+    const activeVod = vodPagination.total;
+    const activeSeries = seriesPagination.total;
     const activeBouquets = bouquets.filter((b) => b.isActive).length;
     const activePackages = packages.filter((p) => p.isActive).length;
     const activeLines = lines.filter((l) => l.status === 'ACTIVE').length;
@@ -1186,7 +1253,7 @@ export function CoreXtreamPage() {
       activeLines,
       totalEpisodes,
     };
-  }, [streams, vodItems, series, bouquets, packages, lines]);
+  }, [streamsPagination.total, vodPagination.total, seriesPagination.total, series, bouquets, packages, lines]);
 
   const overviewRecent = useMemo(() => {
     const items: Array<{
@@ -4663,7 +4730,7 @@ export function CoreXtreamPage() {
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Filmes</h3>
             <div className="flex items-center gap-2">
-              <div className="text-sm text-zinc-600 dark:text-zinc-400">{vodItems.length} registro(s)</div>
+              <div className="text-sm text-zinc-600 dark:text-zinc-400">{vodPagination.total} registro(s)</div>
               {selectedVodIds.length ? (
                 <div className="text-sm text-zinc-600 dark:text-zinc-400">{selectedVodIds.length} selecionado(s)</div>
               ) : null}
@@ -4690,6 +4757,71 @@ export function CoreXtreamPage() {
                 Limpar
               </Button>
               <Button onClick={openCreateVod} disabled={isBillingBlocked}>Novo Filme</Button>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="min-w-[240px]">
+                <label className="block text-sm font-medium mb-1 text-zinc-700 dark:text-zinc-300">Categorias</label>
+                <Select
+                  value={vodBouquetId}
+                  onChange={(e) => {
+                    setVodBouquetId(e.target.value);
+                    setVodPage(1);
+                    setSelectedVodIds([]);
+                  }}
+                >
+                  <option value="">Todas as Categorias</option>
+                  {bouquets.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="min-w-[140px]">
+                <label className="block text-sm font-medium mb-1 text-zinc-700 dark:text-zinc-300">Mostrar</label>
+                <Select
+                  value={String(vodPerPage)}
+                  onChange={(e) => {
+                    setVodPerPage(parseInt(e.target.value, 10));
+                    setVodPage(1);
+                    setSelectedVodIds([]);
+                  }}
+                >
+                  {perPageOptions.map((n) => (
+                    <option key={n} value={String(n)}>{n}</option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 justify-end">
+              <div className="text-sm text-zinc-600 dark:text-zinc-400">
+                Página <span className="font-medium text-zinc-900 dark:text-white">{vodPagination.page}</span> de{' '}
+                <span className="font-medium text-zinc-900 dark:text-white">{vodPagination.totalPages}</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={vodPagination.page <= 1}
+                onClick={() => {
+                  setVodPage((p) => Math.max(1, p - 1));
+                  setSelectedVodIds([]);
+                }}
+              >
+                Anterior
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={vodPagination.page >= vodPagination.totalPages}
+                onClick={() => {
+                  setVodPage((p) => p + 1);
+                  setSelectedVodIds([]);
+                }}
+              >
+                Próxima
+              </Button>
             </div>
           </div>
           <div className="mt-4 overflow-x-auto">
@@ -4789,7 +4921,7 @@ export function CoreXtreamPage() {
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Séries</h3>
             <div className="flex items-center gap-2">
-              <div className="text-sm text-zinc-600 dark:text-zinc-400">{series.length} registro(s)</div>
+              <div className="text-sm text-zinc-600 dark:text-zinc-400">{seriesPagination.total} registro(s)</div>
               {selectedSeriesIds.length ? (
                 <div className="text-sm text-zinc-600 dark:text-zinc-400">{selectedSeriesIds.length} selecionado(s)</div>
               ) : null}
@@ -4816,6 +4948,71 @@ export function CoreXtreamPage() {
                 Limpar
               </Button>
               <Button onClick={openCreateSeries} disabled={isBillingBlocked}>Nova Série</Button>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="min-w-[240px]">
+                <label className="block text-sm font-medium mb-1 text-zinc-700 dark:text-zinc-300">Categorias</label>
+                <Select
+                  value={seriesBouquetId}
+                  onChange={(e) => {
+                    setSeriesBouquetId(e.target.value);
+                    setSeriesPage(1);
+                    setSelectedSeriesIds([]);
+                  }}
+                >
+                  <option value="">Todas as Categorias</option>
+                  {bouquets.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="min-w-[140px]">
+                <label className="block text-sm font-medium mb-1 text-zinc-700 dark:text-zinc-300">Mostrar</label>
+                <Select
+                  value={String(seriesPerPage)}
+                  onChange={(e) => {
+                    setSeriesPerPage(parseInt(e.target.value, 10));
+                    setSeriesPage(1);
+                    setSelectedSeriesIds([]);
+                  }}
+                >
+                  {perPageOptions.map((n) => (
+                    <option key={n} value={String(n)}>{n}</option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 justify-end">
+              <div className="text-sm text-zinc-600 dark:text-zinc-400">
+                Página <span className="font-medium text-zinc-900 dark:text-white">{seriesPagination.page}</span> de{' '}
+                <span className="font-medium text-zinc-900 dark:text-white">{seriesPagination.totalPages}</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={seriesPagination.page <= 1}
+                onClick={() => {
+                  setSeriesPage((p) => Math.max(1, p - 1));
+                  setSelectedSeriesIds([]);
+                }}
+              >
+                Anterior
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={seriesPagination.page >= seriesPagination.totalPages}
+                onClick={() => {
+                  setSeriesPage((p) => p + 1);
+                  setSelectedSeriesIds([]);
+                }}
+              >
+                Próxima
+              </Button>
             </div>
           </div>
           <div className="mt-4 overflow-x-auto">
@@ -4916,7 +5113,7 @@ export function CoreXtreamPage() {
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Streams</h3>
             <div className="flex items-center gap-2">
-              <div className="text-sm text-zinc-600 dark:text-zinc-400">{streams.length} registro(s)</div>
+              <div className="text-sm text-zinc-600 dark:text-zinc-400">{streamsPagination.total} registro(s)</div>
               {selectedStreamIds.length ? (
                 <div className="text-sm text-zinc-600 dark:text-zinc-400">{selectedStreamIds.length} selecionado(s)</div>
               ) : null}
@@ -4962,6 +5159,71 @@ export function CoreXtreamPage() {
                 Limpar
               </Button>
               <Button onClick={openCreateStream} disabled={isBillingBlocked}>Nova Stream</Button>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="min-w-[240px]">
+                <label className="block text-sm font-medium mb-1 text-zinc-700 dark:text-zinc-300">Categorias</label>
+                <Select
+                  value={streamsBouquetId}
+                  onChange={(e) => {
+                    setStreamsBouquetId(e.target.value);
+                    setStreamsPage(1);
+                    setSelectedStreamIds([]);
+                  }}
+                >
+                  <option value="">Todas as Categorias</option>
+                  {bouquets.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="min-w-[140px]">
+                <label className="block text-sm font-medium mb-1 text-zinc-700 dark:text-zinc-300">Mostrar</label>
+                <Select
+                  value={String(streamsPerPage)}
+                  onChange={(e) => {
+                    setStreamsPerPage(parseInt(e.target.value, 10));
+                    setStreamsPage(1);
+                    setSelectedStreamIds([]);
+                  }}
+                >
+                  {perPageOptions.map((n) => (
+                    <option key={n} value={String(n)}>{n}</option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 justify-end">
+              <div className="text-sm text-zinc-600 dark:text-zinc-400">
+                Página <span className="font-medium text-zinc-900 dark:text-white">{streamsPagination.page}</span> de{' '}
+                <span className="font-medium text-zinc-900 dark:text-white">{streamsPagination.totalPages}</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={streamsPagination.page <= 1}
+                onClick={() => {
+                  setStreamsPage((p) => Math.max(1, p - 1));
+                  setSelectedStreamIds([]);
+                }}
+              >
+                Anterior
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={streamsPagination.page >= streamsPagination.totalPages}
+                onClick={() => {
+                  setStreamsPage((p) => p + 1);
+                  setSelectedStreamIds([]);
+                }}
+              >
+                Próxima
+              </Button>
             </div>
           </div>
           <div className="mt-4 overflow-x-auto">

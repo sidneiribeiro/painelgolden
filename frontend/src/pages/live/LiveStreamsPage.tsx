@@ -39,7 +39,9 @@ export function LiveStreamsPage() {
   const [keyword, setKeyword] = useState('');
   const [categoryId, setCategoryId] = useState<string>('');
   const [page, setPage] = useState(1);
+  const [perPageChoice, setPerPageChoice] = useState(50);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const perPageOptions = useMemo(() => [10, 20, 50, 100, 200, 500, 1000], []);
 
   const [editing, setEditing] = useState<LiveStreamItem | null>(null);
   const [editOpen, setEditOpen] = useState(false);
@@ -90,8 +92,8 @@ export function LiveStreamsPage() {
   const categories: LiveCategory[] = Array.isArray(categoriesData) ? categoriesData : [];
 
   const streamsQueryKey = useMemo(
-    () => ['live-streams', serverId, page, keyword, categoryId],
-    [serverId, page, keyword, categoryId]
+    () => ['live-streams', serverId, page, perPageChoice, keyword, categoryId],
+    [serverId, page, perPageChoice, keyword, categoryId]
   );
 
   const { data: streamsData, isLoading: isLoadingStreams, refetch } = useQuery({
@@ -100,7 +102,7 @@ export function LiveStreamsPage() {
       const params = new URLSearchParams({
         serverId,
         page: String(page),
-        perPage: '50',
+        perPage: String(perPageChoice),
         keyword,
       });
       if (categoryId) params.set('categoryId', categoryId);
@@ -113,7 +115,7 @@ export function LiveStreamsPage() {
 
   const streams: LiveStreamItem[] = streamsData?.items || [];
   const total = streamsData?.total || 0;
-  const perPage = streamsData?.perPage || 50;
+  const perPage = streamsData?.perPage || perPageChoice;
   const totalPages = Math.max(1, Math.ceil(total / perPage));
 
   const allPageSelected = streams.length > 0 && streams.every((s) => selectedIds.has(s.id));
@@ -313,7 +315,7 @@ export function LiveStreamsPage() {
       ) : null}
 
       <Card className="p-6">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
           <div>
             <label className="block text-sm font-medium mb-2">Servidor</label>
             <Select value={serverId} onChange={(e) => { setServerId(e.target.value); setPage(1); }}>
@@ -343,6 +345,25 @@ export function LiveStreamsPage() {
               {categories.map((c) => (
                 <option key={c.id} value={String(c.id)}>
                   {c.category_name}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Mostrar</label>
+            <Select
+              value={String(perPageChoice)}
+              onChange={(e) => {
+                setPerPageChoice(parseInt(e.target.value, 10));
+                setPage(1);
+                setSelectedIds(new Set());
+              }}
+              disabled={!serverId}
+            >
+              {perPageOptions.map((n) => (
+                <option key={n} value={String(n)}>
+                  {n}
                 </option>
               ))}
             </Select>

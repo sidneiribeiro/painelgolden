@@ -1164,17 +1164,54 @@ async function syncStreamEdgeServers(streamId: string, desiredServerIds: string[
 export const listStreams = asyncHandler(async (req: Request, res: Response) => {
   const currentUser = req.user!;
 
+  const q = z
+    .object({
+      page: z.coerce.number().int().min(1).default(1),
+      perPage: z.coerce.number().int().min(10).max(1000).default(50),
+      search: z.string().optional(),
+      bouquetId: z.string().uuid().optional(),
+    })
+    .parse(req.query);
+
+  const where: any = {
+    ...coreOwnerWhere(currentUser),
+  };
+
+  if (q.search && String(q.search).trim()) {
+    where.name = { contains: String(q.search).trim(), mode: 'insensitive' };
+  }
+  if (q.bouquetId) {
+    where.bouquets = {
+      some: {
+        bouquetId: q.bouquetId,
+        bouquet: { ownerId: currentUser.userId },
+      },
+    };
+  }
+
+  const total = await prisma.coreStream.count({ where });
+  const totalPages = Math.max(1, Math.ceil(total / q.perPage));
+  const page = Math.min(q.page, totalPages);
+  const skip = (page - 1) * q.perPage;
+
   const streams = await prisma.coreStream.findMany({
-    where: coreOwnerWhere(currentUser),
+    where,
     orderBy: [{ createdAt: 'desc' }],
+    take: q.perPage,
+    skip,
   });
 
-  const bouquetLinks = await prisma.coreBouquetStream.findMany({
-    where: {
-      bouquet: coreOwnerWhere(currentUser),
-    },
-    select: { streamId: true, bouquetId: true },
-  });
+  const streamIds = streams.map((s) => s.id);
+
+  const bouquetLinks = streamIds.length
+    ? await prisma.coreBouquetStream.findMany({
+        where: {
+          streamId: { in: streamIds },
+          bouquet: coreOwnerWhere(currentUser),
+        },
+        select: { streamId: true, bouquetId: true },
+      })
+    : [];
 
   const byStream: Record<string, string[]> = {};
   for (const link of bouquetLinks) {
@@ -1182,10 +1219,12 @@ export const listStreams = asyncHandler(async (req: Request, res: Response) => {
     byStream[link.streamId].push(link.bouquetId);
   }
 
-  const serverLinks = await (prisma as any).coreStreamEdgeServer.findMany({
-    where: { stream: coreOwnerWhere(currentUser) },
-    select: { streamId: true, serverId: true },
-  });
+  const serverLinks = streamIds.length
+    ? await (prisma as any).coreStreamEdgeServer.findMany({
+        where: { streamId: { in: streamIds } },
+        select: { streamId: true, serverId: true },
+      })
+    : [];
   const serversByStream: Record<string, string[]> = {};
   for (const link of serverLinks) {
     if (!serversByStream[link.streamId]) serversByStream[link.streamId] = [];
@@ -1198,6 +1237,12 @@ export const listStreams = asyncHandler(async (req: Request, res: Response) => {
       bouquetIds: byStream[s.id] || [],
       serverIds: serversByStream[s.id] || [],
     })),
+    pagination: {
+      page,
+      perPage: q.perPage,
+      total,
+      totalPages,
+    },
   });
 });
 
@@ -4026,15 +4071,49 @@ export const recreateCorePaymentPix = asyncHandler(async (req: Request, res: Res
 export const listVod = asyncHandler(async (req: Request, res: Response) => {
   const currentUser = req.user!;
 
+  const q = z
+    .object({
+      page: z.coerce.number().int().min(1).default(1),
+      perPage: z.coerce.number().int().min(10).max(1000).default(50),
+      search: z.string().optional(),
+      bouquetId: z.string().uuid().optional(),
+    })
+    .parse(req.query);
+
+  const where: any = {
+    ...coreOwnerWhere(currentUser),
+  };
+  if (q.search && String(q.search).trim()) {
+    where.name = { contains: String(q.search).trim(), mode: 'insensitive' };
+  }
+  if (q.bouquetId) {
+    where.bouquets = {
+      some: {
+        bouquetId: q.bouquetId,
+        bouquet: { ownerId: currentUser.userId },
+      },
+    };
+  }
+
+  const total = await prisma.coreVodItem.count({ where });
+  const totalPages = Math.max(1, Math.ceil(total / q.perPage));
+  const page = Math.min(q.page, totalPages);
+  const skip = (page - 1) * q.perPage;
+
   const vodItems = await prisma.coreVodItem.findMany({
-    where: coreOwnerWhere(currentUser),
+    where,
     orderBy: [{ createdAt: 'desc' }],
+    take: q.perPage,
+    skip,
   });
 
-  const links = await prisma.coreBouquetVodItem.findMany({
-    where: { bouquet: coreOwnerWhere(currentUser) },
-    select: { vodItemId: true, bouquetId: true },
-  });
+  const ids = vodItems.map((v) => v.id);
+  const links = ids.length
+    ? await prisma.coreBouquetVodItem.findMany({
+        where: { vodItemId: { in: ids }, bouquet: coreOwnerWhere(currentUser) },
+        select: { vodItemId: true, bouquetId: true },
+      })
+    : [];
 
   const byVod: Record<string, string[]> = {};
   for (const l of links) {
@@ -4047,6 +4126,12 @@ export const listVod = asyncHandler(async (req: Request, res: Response) => {
       ...v,
       bouquetIds: byVod[v.id] || [],
     })),
+    pagination: {
+      page,
+      perPage: q.perPage,
+      total,
+      totalPages,
+    },
   });
 });
 
@@ -4225,16 +4310,50 @@ export const bulkDeleteCoreVod = asyncHandler(async (req: Request, res: Response
 export const listSeries = asyncHandler(async (req: Request, res: Response) => {
   const currentUser = req.user!;
 
+  const q = z
+    .object({
+      page: z.coerce.number().int().min(1).default(1),
+      perPage: z.coerce.number().int().min(10).max(1000).default(50),
+      search: z.string().optional(),
+      bouquetId: z.string().uuid().optional(),
+    })
+    .parse(req.query);
+
+  const where: any = {
+    ...coreOwnerWhere(currentUser),
+  };
+  if (q.search && String(q.search).trim()) {
+    where.name = { contains: String(q.search).trim(), mode: 'insensitive' };
+  }
+  if (q.bouquetId) {
+    where.bouquets = {
+      some: {
+        bouquetId: q.bouquetId,
+        bouquet: { ownerId: currentUser.userId },
+      },
+    };
+  }
+
+  const total = await prisma.coreSeries.count({ where });
+  const totalPages = Math.max(1, Math.ceil(total / q.perPage));
+  const page = Math.min(q.page, totalPages);
+  const skip = (page - 1) * q.perPage;
+
   const series = await prisma.coreSeries.findMany({
-    where: coreOwnerWhere(currentUser),
+    where,
     include: { _count: { select: { episodes: true } } },
     orderBy: [{ createdAt: 'desc' }],
+    take: q.perPage,
+    skip,
   });
 
-  const links = await prisma.coreBouquetSeries.findMany({
-    where: { bouquet: coreOwnerWhere(currentUser) },
-    select: { seriesId: true, bouquetId: true },
-  });
+  const ids = series.map((s) => s.id);
+  const links = ids.length
+    ? await prisma.coreBouquetSeries.findMany({
+        where: { seriesId: { in: ids }, bouquet: coreOwnerWhere(currentUser) },
+        select: { seriesId: true, bouquetId: true },
+      })
+    : [];
 
   const bySeries: Record<string, string[]> = {};
   for (const l of links) {
@@ -4247,6 +4366,12 @@ export const listSeries = asyncHandler(async (req: Request, res: Response) => {
       ...s,
       bouquetIds: bySeries[s.id] || [],
     })),
+    pagination: {
+      page,
+      perPage: q.perPage,
+      total,
+      totalPages,
+    },
   });
 });
 

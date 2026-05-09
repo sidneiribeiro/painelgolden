@@ -301,7 +301,7 @@ export const liveController = {
       }
 
       const pageNum = Math.max(1, parseInt(String(page), 10) || 1);
-      const perPageNum = Math.min(200, Math.max(10, parseInt(String(perPage), 10) || 50));
+      const perPageNum = Math.min(1000, Math.max(10, parseInt(String(perPage), 10) || 50));
       const offset = (pageNum - 1) * perPageNum;
 
       const { XUIVodDBClient } = await import('../services/vod/xui-vod-db.client.js');
