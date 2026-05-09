@@ -89,8 +89,8 @@ export const MENU_KEY_LABELS: Record<string, string> = {
 };
 
 // Default permissions
-const DEFAULT_RESELLER_KEYS = ['dashboard', 'customers', 'users', 'notifications', 'core'];
-const DEFAULT_MASTER_RESELLER_KEYS = ['dashboard', 'customers', 'users', 'notifications', 'core'];
+const DEFAULT_RESELLER_KEYS = ['dashboard', 'customers', 'users', 'panel_settings', 'notifications', 'core'];
+const DEFAULT_MASTER_RESELLER_KEYS = ['dashboard', 'customers', 'users', 'panel_settings', 'notifications', 'core'];
 
 // Navigation items
 const navItems: NavItem[] = [
