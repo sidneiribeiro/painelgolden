@@ -416,6 +416,13 @@ function parseSeriesEpisodeName(raw: string): { seriesName: string; season: numb
 
 type ImportM3UInput = z.infer<typeof importM3USchema>;
 
+type CoreM3UImportProgress = {
+  progress?: number;
+  totalItems?: number;
+  processedItems?: number;
+  currentItem?: string | null;
+};
+
 function isAdultCategoryName(name: string) {
   const raw = (name || '').trim();
   if (!raw) return false;
@@ -472,6 +479,7 @@ function extractYearFromTitle(title: string): number | undefined {
 }
 
 async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
+  const onProgress = (input as any)?.onProgress as ((p: CoreM3UImportProgress) => void) | undefined;
   const {
     url,
     mode = 'append',
@@ -492,6 +500,9 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
   const tmdbMaxItems = 2500;
 
   const parser = new M3UParser();
+  try {
+    onProgress?.({ progress: 2, currentItem: 'Baixando M3U...' });
+  } catch {}
   const parsed = await parser.parseFromUrl(url, 120000);
 
   const wantedTypes = (() => {
@@ -501,12 +512,32 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
   })();
 
   const items = parsed.items.filter(i => wantedTypes.has(i.type));
-  if (!items.length) {
+  const totalItems = items.length;
+  try {
+    onProgress?.({
+      progress: totalItems ? 5 : 100,
+      totalItems,
+      processedItems: 0,
+      currentItem: totalItems ? 'M3U analisado' : 'Nenhum item encontrado',
+    });
+  } catch {}
+  if (!totalItems) {
     return {
       ok: true,
       message: 'Nenhum item compatível encontrado no M3U para importar',
       stats: parsed.stats,
-      imported: { bouquetsCreated: 0, streamsCreated: 0, vodCreated: 0, seriesCreated: 0, episodesCreated: 0, skipped: 0 },
+      imported: {
+        bouquetsCreated: 0,
+        streamsCreated: 0,
+        vodCreated: 0,
+        seriesCreated: 0,
+        episodesCreated: 0,
+        streamsUpdated: 0,
+        vodUpdated: 0,
+        seriesUpdated: 0,
+        episodesUpdated: 0,
+        skipped: 0,
+      },
       createdPackage: null,
       createdLine: null,
     };
@@ -545,6 +576,9 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
     bouquetByName.set(name, b.id);
     bouquetsCreated++;
   }
+  try {
+    onProgress?.({ progress: 10, currentItem: 'Categorias prontas' });
+  } catch {}
 
   let streamsCreated = 0;
   let vodCreated = 0;
@@ -562,10 +596,27 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
   });
   const ownedBouquetNames = new Set(allOwnedBouquets.map(b => b.name));
 
+  let processedItems = 0;
+  const progressBase = 10;
+  const progressSpan = 80;
+  const emitProgress = (currentName?: string) => {
+    const pct = totalItems ? progressBase + Math.floor((processedItems / totalItems) * progressSpan) : progressBase;
+    try {
+      onProgress?.({
+        progress: Math.max(progressBase, Math.min(progressBase + progressSpan, pct)),
+        totalItems,
+        processedItems,
+        currentItem: currentName || `Importando ${processedItems}/${totalItems}`,
+      });
+    } catch {}
+  };
+
   for (const item of items) {
     const group = (item.group || 'Sem categoria').trim() || 'Sem categoria';
     if (!ownedBouquetNames.has(group)) {
       skipped++;
+      processedItems++;
+      if (processedItems % 25 === 0 || processedItems === totalItems) emitProgress(item.name);
       continue;
     }
     const bouquetId = bouquetByName.get(group)!;
@@ -635,6 +686,8 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
       } catch {
         skipped++;
       }
+      processedItems++;
+      if (processedItems % 25 === 0 || processedItems === totalItems) emitProgress(item.name);
       continue;
     }
 
@@ -722,6 +775,8 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
       } catch {
         skipped++;
       }
+      processedItems++;
+      if (processedItems % 25 === 0 || processedItems === totalItems) emitProgress(item.name);
       continue;
     }
 
@@ -826,6 +881,8 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
         },
       });
       episodesCreated++;
+      processedItems++;
+      if (processedItems % 25 === 0 || processedItems === totalItems) emitProgress(seriesName);
       continue;
     }
   }
@@ -834,6 +891,9 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
 
   let createdPackage: { id: string; name: string } | null = null;
   if (createPackage) {
+    try {
+      onProgress?.({ progress: 92, currentItem: 'Sincronizando pacotes' });
+    } catch {}
     const pkgAllName = 'completo';
     const pkgNoAdultName = 'completo sem adulto';
 
@@ -868,6 +928,9 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
 
   let createdLine: { id: string; username: string; password: string; expiresAt: string; packageId: string | null } | null = null;
   if (createLine) {
+    try {
+      onProgress?.({ progress: 97, currentItem: 'Criando linha' });
+    } catch {}
     const desiredUsername = (lineUsername || '').trim();
     const desiredPassword = (linePassword || '').trim();
 
@@ -984,32 +1047,24 @@ function startCoreM3UImportJob(ownerId: string, input: ImportM3UInput) {
   setTimeout(() => {
     void (async () => {
       try {
-        const parser = new M3UParser();
-        const parsed = await parser.parseFromUrl(input.url, 120000);
-        const wantedTypes = (() => {
-          if (input.type === 'all' || !input.type) return new Set(['live', 'movie', 'series']);
-          if (input.type === 'vod') return new Set(['movie', 'series']);
-          return new Set([input.type]);
-        })();
-        const items = parsed.items.filter((i) => wantedTypes.has(i.type));
-        const totalItems = items.length;
-        const baseJob = coreM3UImportJobs.get(jobId);
-        if (baseJob) {
-          baseJob.totalItems = totalItems;
-          baseJob.currentItem = totalItems ? 'Importando...' : 'Nenhum item encontrado';
-          baseJob.progress = totalItems ? 1 : 100;
-          coreM3UImportJobs.set(jobId, baseJob);
-        }
-
-        let processedItems = 0;
-        const result = await runCoreM3UImport(ownerId, input);
-        processedItems = totalItems;
+        const result = await runCoreM3UImport(ownerId, {
+          ...(input as any),
+          onProgress: (p: CoreM3UImportProgress) => {
+            const j = coreM3UImportJobs.get(jobId);
+            if (!j) return;
+            if (typeof p.totalItems === 'number') j.totalItems = p.totalItems;
+            if (typeof p.processedItems === 'number') j.processedItems = p.processedItems;
+            if (typeof p.progress === 'number') j.progress = Math.max(0, Math.min(99, Math.floor(p.progress)));
+            if (typeof p.currentItem === 'string' || p.currentItem === null) j.currentItem = p.currentItem;
+            coreM3UImportJobs.set(jobId, j);
+          },
+        } as any);
 
         const done = coreM3UImportJobs.get(jobId);
         if (done) {
           done.status = 'success';
           done.progress = 100;
-          done.processedItems = processedItems;
+          done.processedItems = done.totalItems || done.processedItems;
           done.currentItem = 'Concluído';
           done.finishedAt = new Date();
           done.result = result;

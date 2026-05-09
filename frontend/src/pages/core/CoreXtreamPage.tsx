@@ -425,12 +425,12 @@ type CoreM3USchedule = {
   createdAt: string;
 };
 
-type TabKey = 'streams' | 'servers' | 'connections' | 'bouquets' | 'packages' | 'lines' | 'payments' | 'vod' | 'series' | 'schedules' | 'epg';
+type TabKey = 'overview' | 'streams' | 'servers' | 'connections' | 'bouquets' | 'packages' | 'lines' | 'payments' | 'vod' | 'series' | 'schedules' | 'epg';
 
 const parseTabFromSearch = (search: string): TabKey => {
   const raw = new URLSearchParams(search || '').get('tab');
   const t = (raw || '').trim();
-  const allowed: TabKey[] = ['streams', 'servers', 'connections', 'bouquets', 'packages', 'lines', 'payments', 'vod', 'series', 'schedules', 'epg'];
+  const allowed: TabKey[] = ['overview', 'streams', 'servers', 'connections', 'bouquets', 'packages', 'lines', 'payments', 'vod', 'series', 'schedules', 'epg'];
   return allowed.includes(t as TabKey) ? (t as TabKey) : 'lines';
 };
 
@@ -480,6 +480,12 @@ const formatDuration = (startedAtIso: string) => {
   const mm = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
   const ss = String(total % 60).padStart(2, '0');
   return `${hh}:${mm}:${ss}`;
+};
+
+const formatDateTime = (iso: string) => {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '-';
+  return d.toLocaleString('pt-BR');
 };
 
 const formatUptime = (seconds?: number | null) => {
@@ -775,7 +781,15 @@ export function CoreXtreamPage() {
     isActive: true,
   });
 
-  const [importJobId, setImportJobId] = useState<string>('');
+  const [m3uImportJobId, setM3uImportJobId] = useState<string | null>(() => {
+    try {
+      return window.localStorage.getItem('core_m3u_import_job_id');
+    } catch {
+      return null;
+    }
+  });
+  const [m3uImportPolling, setM3uImportPolling] = useState<boolean>(true);
+  const m3uImportLastNotifiedRef = useRef<string>('');
 
   const [epgForm, setEpgForm] = useState({
     name: '',
@@ -792,6 +806,69 @@ export function CoreXtreamPage() {
       return res.data;
     },
   });
+
+  useEffect(() => {
+    try {
+      if (m3uImportJobId) {
+        window.localStorage.setItem('core_m3u_import_job_id', m3uImportJobId);
+      } else {
+        window.localStorage.removeItem('core_m3u_import_job_id');
+      }
+    } catch {}
+  }, [m3uImportJobId]);
+
+  useEffect(() => {
+    if (m3uImportJobId) setM3uImportPolling(true);
+  }, [m3uImportJobId]);
+
+  const {
+    data: m3uImportJob,
+    isLoading: m3uImportJobLoading,
+    isError: m3uImportJobIsError,
+    error: m3uImportJobError,
+    refetch: refetchM3UImportJob,
+  } = useQuery<any>({
+    queryKey: ['core-m3u-import-job', m3uImportJobId],
+    queryFn: async () => {
+      if (!m3uImportJobId) return null;
+      const res = await api.get(`/core/import/m3u/jobs/${m3uImportJobId}`);
+      return res.data?.data;
+    },
+    enabled: !!m3uImportJobId,
+    retry: false,
+    refetchInterval: m3uImportPolling ? 2500 : false,
+  });
+
+  useEffect(() => {
+    const status = String(m3uImportJob?.status || '');
+    if (!status) return;
+    if (status !== 'processing') setM3uImportPolling(false);
+
+    const key = `${m3uImportJobId || ''}:${status}`;
+    if (m3uImportLastNotifiedRef.current === key) return;
+
+    if (status === 'success') {
+      const imported = m3uImportJob?.result?.imported;
+      const msg = imported
+        ? `Importado: categorias ${imported.bouquetsCreated}, live ${imported.streamsCreated}, vod ${imported.vodCreated}, séries ${imported.seriesCreated}, eps ${imported.episodesCreated}, skip ${imported.skipped}`
+        : 'Importação concluída';
+      toast.success(msg);
+      if (m3uImportJob?.result?.createdLine?.username && m3uImportJob?.result?.createdLine?.password) {
+        toast.success(`Linha criada: ${m3uImportJob.result.createdLine.username} / ${m3uImportJob.result.createdLine.password}`);
+      }
+      queryClient.invalidateQueries({ queryKey: ['core-streams'] });
+      queryClient.invalidateQueries({ queryKey: ['core-bouquets'] });
+      queryClient.invalidateQueries({ queryKey: ['core-vod'] });
+      queryClient.invalidateQueries({ queryKey: ['core-series'] });
+      if (activeSeriesId) queryClient.invalidateQueries({ queryKey: ['core-series-episodes', activeSeriesId] });
+    }
+
+    if (status === 'error') {
+      toast.error(m3uImportJob?.error || 'Erro ao importar M3U');
+    }
+
+    m3uImportLastNotifiedRef.current = key;
+  }, [m3uImportJob?.status, m3uImportJobId, m3uImportPolling, m3uImportJob, activeSeriesId, queryClient]);
 
   const { data: serversData, isLoading: serversLoading } = useQuery<{ data: CoreEdgeServer[] }>({
     queryKey: ['core-servers'],
@@ -1003,6 +1080,116 @@ export function CoreXtreamPage() {
   const corePayments = corePaymentsData?.data || [];
   const salePaymentRows = salePaymentStatusData?.data || [];
   const paymentsList = useMemo(() => paymentsInfiniteData?.pages.flatMap((p) => p.data) || [], [paymentsInfiniteData]);
+
+  const overviewCounts = useMemo(() => {
+    const activeStreams = streams.filter((s) => s.isActive).length;
+    const activeVod = vodItems.filter((v) => v.isActive).length;
+    const activeSeries = series.filter((s) => s.isActive).length;
+    const activeBouquets = bouquets.filter((b) => b.isActive).length;
+    const activePackages = packages.filter((p) => p.isActive).length;
+    const activeLines = lines.filter((l) => l.status === 'ACTIVE').length;
+    const totalEpisodes = series.reduce((acc, s) => {
+      const n = s._count?.episodes;
+      return acc + (typeof n === 'number' && Number.isFinite(n) ? n : 0);
+    }, 0);
+    return {
+      activeStreams,
+      activeVod,
+      activeSeries,
+      activeBouquets,
+      activePackages,
+      activeLines,
+      totalEpisodes,
+    };
+  }, [streams, vodItems, series, bouquets, packages, lines]);
+
+  const overviewRecent = useMemo(() => {
+    const items: Array<{
+      key: string;
+      tab: TabKey;
+      kind: string;
+      name: string;
+      createdAt: string;
+      ts: number;
+      badge: { label: string; variant: 'success' | 'warning' | 'info' };
+    }> = [];
+
+    for (const b of bouquets) {
+      const ts = new Date(b.createdAt).getTime();
+      items.push({
+        key: `bouquet:${b.id}`,
+        tab: 'bouquets',
+        kind: 'Categoria',
+        name: b.name,
+        createdAt: b.createdAt,
+        ts: Number.isFinite(ts) ? ts : 0,
+        badge: { label: b.isActive ? 'ATIVO' : 'INATIVO', variant: b.isActive ? 'success' : 'warning' },
+      });
+    }
+    for (const p of packages) {
+      const ts = new Date(p.createdAt).getTime();
+      items.push({
+        key: `package:${p.id}`,
+        tab: 'packages',
+        kind: 'Pacote',
+        name: p.name,
+        createdAt: p.createdAt,
+        ts: Number.isFinite(ts) ? ts : 0,
+        badge: { label: p.isActive ? 'ATIVO' : 'INATIVO', variant: p.isActive ? 'success' : 'warning' },
+      });
+    }
+    for (const l of lines) {
+      const ts = new Date(l.createdAt).getTime();
+      items.push({
+        key: `line:${l.id}`,
+        tab: 'lines',
+        kind: 'Linha',
+        name: l.username,
+        createdAt: l.createdAt,
+        ts: Number.isFinite(ts) ? ts : 0,
+        badge: { label: l.status === 'ACTIVE' ? 'ATIVA' : 'DESATIVADA', variant: l.status === 'ACTIVE' ? 'success' : 'warning' },
+      });
+    }
+    for (const s of streams) {
+      const ts = new Date(s.createdAt).getTime();
+      items.push({
+        key: `stream:${s.id}`,
+        tab: 'streams',
+        kind: 'Stream',
+        name: s.name,
+        createdAt: s.createdAt,
+        ts: Number.isFinite(ts) ? ts : 0,
+        badge: { label: s.isActive ? 'ATIVO' : 'INATIVO', variant: s.isActive ? 'success' : 'warning' },
+      });
+    }
+    for (const v of vodItems) {
+      const ts = new Date(v.createdAt).getTime();
+      items.push({
+        key: `vod:${v.id}`,
+        tab: 'vod',
+        kind: 'VOD',
+        name: v.name,
+        createdAt: v.createdAt,
+        ts: Number.isFinite(ts) ? ts : 0,
+        badge: { label: v.isActive ? 'ATIVO' : 'INATIVO', variant: v.isActive ? 'success' : 'warning' },
+      });
+    }
+    for (const s of series) {
+      const ts = new Date(s.createdAt).getTime();
+      items.push({
+        key: `series:${s.id}`,
+        tab: 'series',
+        kind: 'Série',
+        name: s.name,
+        createdAt: s.createdAt,
+        ts: Number.isFinite(ts) ? ts : 0,
+        badge: { label: s.isActive ? 'ATIVA' : 'INATIVA', variant: s.isActive ? 'success' : 'warning' },
+      });
+    }
+
+    items.sort((a, b) => b.ts - a.ts);
+    return items.slice(0, 25);
+  }, [bouquets, packages, lines, streams, vodItems, series]);
 
   useEffect(() => {
     if (tab !== 'payments') setSelectedPaymentIds([]);
@@ -1838,7 +2025,7 @@ export function CoreXtreamPage() {
       if (data?.jobId) {
         toast.success('Importação iniciada em segundo plano');
         setImportModalOpen(false);
-        setImportJobId(String(data.jobId));
+        setM3uImportJobId(String(data.jobId));
         return;
       }
       const imported = data?.imported;
@@ -1866,49 +2053,6 @@ export function CoreXtreamPage() {
       }
     },
   });
-
-  useEffect(() => {
-    if (!importJobId) return;
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const res = await api.get(`/core/import/m3u/jobs/${importJobId}`);
-        const job = res.data?.data;
-        const status = String(job?.status || '');
-        if (status === 'success') {
-          if (cancelled) return;
-          const imported = job?.result?.imported;
-          const msg = imported
-            ? `Importado: bouquets ${imported.bouquetsCreated}, live ${imported.streamsCreated}, vod ${imported.vodCreated}, séries ${imported.seriesCreated}, eps ${imported.episodesCreated}, skip ${imported.skipped}`
-            : 'Importação concluída';
-          toast.success(msg);
-          if (job?.result?.createdLine?.username && job?.result?.createdLine?.password) {
-            toast.success(`Linha criada: ${job.result.createdLine.username} / ${job.result.createdLine.password}`);
-          }
-          queryClient.invalidateQueries({ queryKey: ['core-streams'] });
-          queryClient.invalidateQueries({ queryKey: ['core-bouquets'] });
-          queryClient.invalidateQueries({ queryKey: ['core-vod'] });
-          queryClient.invalidateQueries({ queryKey: ['core-series'] });
-          if (activeSeriesId) queryClient.invalidateQueries({ queryKey: ['core-series-episodes', activeSeriesId] });
-          setImportJobId('');
-          return;
-        }
-        if (status === 'error') {
-          if (cancelled) return;
-          toast.error(job?.error || 'Erro ao importar M3U');
-          setImportJobId('');
-        }
-      } catch (e: any) {
-        if (cancelled) return;
-      }
-    };
-    tick();
-    const interval = window.setInterval(tick, 2500);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [importJobId, activeSeriesId, queryClient]);
 
   const createScheduleMutation = useMutation({
     mutationFn: async () => {
@@ -2882,6 +3026,7 @@ export function CoreXtreamPage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2 items-center">
+            <button className={tabButtonClass('overview')} onClick={() => setActiveTab('overview')}>Conteúdos</button>
             <button className={tabButtonClass('lines')} onClick={() => setActiveTab('lines')}>Linhas</button>
             <button className={tabButtonClass('connections')} onClick={() => setActiveTab('connections')}>Conexões</button>
             <button className={tabButtonClass('payments')} onClick={() => setActiveTab('payments')}>Pagamentos</button>
@@ -2917,9 +3062,174 @@ export function CoreXtreamPage() {
         </div>
       </Card>
 
+      {m3uImportJobId ? (
+        <Card>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2">
+                <div className="text-sm font-semibold text-zinc-900 dark:text-white">Status da Importação M3U</div>
+                {m3uImportJob?.status === 'processing' ? <Badge variant="warning">Processando</Badge> : null}
+                {m3uImportJob?.status === 'success' ? <Badge variant="success">Concluído</Badge> : null}
+                {m3uImportJob?.status === 'error' ? <Badge variant="error">Erro</Badge> : null}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" onClick={() => refetchM3UImportJob()}>
+                  Recarregar
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setM3uImportJobId(null);
+                    setM3uImportPolling(false);
+                    m3uImportLastNotifiedRef.current = '';
+                  }}
+                >
+                  Limpar
+                </Button>
+              </div>
+            </div>
+
+            {m3uImportJobLoading ? (
+              <div className="flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
+                <Spinner />
+                Carregando status...
+              </div>
+            ) : m3uImportJobIsError ? (
+              <div className="text-sm text-red-600 dark:text-red-400">
+                {(m3uImportJobError as any)?.response?.data?.error || (m3uImportJobError as any)?.message || 'Erro ao carregar status do job'}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3 text-sm text-zinc-700 dark:text-zinc-300">
+                  <div className="truncate">
+                    {m3uImportJob?.currentItem || (m3uImportJob?.status === 'processing' ? 'Importando...' : '')}
+                  </div>
+                  <div className="shrink-0 font-medium">
+                    {Number(m3uImportJob?.progress || 0)}%
+                  </div>
+                </div>
+                <div className="w-full bg-zinc-200 dark:bg-zinc-800 rounded-full h-2">
+                  <div
+                    className="bg-cyan-600 dark:bg-cyan-500 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${Math.max(0, Math.min(100, Number(m3uImportJob?.progress || 0)))}%` }}
+                  />
+                </div>
+                <div className="flex flex-col gap-1 text-xs text-zinc-600 dark:text-zinc-400">
+                  <div>
+                    {typeof m3uImportJob?.processedItems === 'number' && typeof m3uImportJob?.totalItems === 'number'
+                      ? `Itens: ${m3uImportJob.processedItems} / ${m3uImportJob.totalItems}`
+                      : null}
+                  </div>
+                  {m3uImportJob?.startedAt ? <div>Duração: {formatDuration(String(m3uImportJob.startedAt))}</div> : null}
+                </div>
+              </div>
+            )}
+          </div>
+        </Card>
+      ) : null}
+
       {isBusy ? (
         <div className="flex items-center justify-center py-10">
           <Spinner />
+        </div>
+      ) : null}
+
+      {tab === 'overview' ? (
+        <div className="space-y-4">
+          <Card>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Conteúdos do Painel</h3>
+              <div className="text-sm text-zinc-600 dark:text-zinc-400">
+                Total: {streams.length + vodItems.length + series.length} itens
+              </div>
+            </div>
+            <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+                <div className="text-xs text-zinc-600 dark:text-zinc-400">STREAMS</div>
+                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{streams.length}</div>
+                <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Ativos: {overviewCounts.activeStreams}</div>
+              </div>
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+                <div className="text-xs text-zinc-600 dark:text-zinc-400">VOD</div>
+                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{vodItems.length}</div>
+                <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Ativos: {overviewCounts.activeVod}</div>
+              </div>
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+                <div className="text-xs text-zinc-600 dark:text-zinc-400">SÉRIES</div>
+                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{series.length}</div>
+                <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Ativas: {overviewCounts.activeSeries}</div>
+              </div>
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+                <div className="text-xs text-zinc-600 dark:text-zinc-400">EPISÓDIOS</div>
+                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{overviewCounts.totalEpisodes}</div>
+              </div>
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+                <div className="text-xs text-zinc-600 dark:text-zinc-400">CATEGORIAS</div>
+                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{bouquets.length}</div>
+                <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Ativas: {overviewCounts.activeBouquets}</div>
+              </div>
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+                <div className="text-xs text-zinc-600 dark:text-zinc-400">PACOTES</div>
+                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{packages.length}</div>
+                <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Ativos: {overviewCounts.activePackages}</div>
+              </div>
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+                <div className="text-xs text-zinc-600 dark:text-zinc-400">LINHAS</div>
+                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{lines.length}</div>
+                <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Ativas: {overviewCounts.activeLines}</div>
+              </div>
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+                <div className="text-xs text-zinc-600 dark:text-zinc-400">SERVIDORES ATIVOS</div>
+                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{activeServersCount}</div>
+              </div>
+            </div>
+          </Card>
+
+          <Card>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Últimos adicionados</h3>
+              <div className="text-sm text-zinc-600 dark:text-zinc-400">{overviewRecent.length} item(ns)</div>
+            </div>
+            <div className="mt-4 overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="text-left text-zinc-600 dark:text-zinc-400">
+                    <th className="py-2 pr-4">Tipo</th>
+                    <th className="py-2 pr-4">Nome</th>
+                    <th className="py-2 pr-4">Status</th>
+                    <th className="py-2 pr-4">Criado em</th>
+                    <th className="py-2 pr-4"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {overviewRecent.map((it) => (
+                    <tr key={it.key} className="border-t border-zinc-200/70 dark:border-zinc-800/70">
+                      <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">{it.kind}</td>
+                      <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-white">{it.name}</td>
+                      <td className="py-3 pr-4">
+                        <Badge variant={it.badge.variant}>{it.badge.label}</Badge>
+                      </td>
+                      <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">{formatDateTime(it.createdAt)}</td>
+                      <td className="py-3 pr-4">
+                        <div className="flex items-center gap-2 justify-end">
+                          <Button variant="outline" size="sm" onClick={() => setActiveTab(it.tab)}>
+                            Ver
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {overviewRecent.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
+                        Nenhum conteúdo encontrado
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </Card>
         </div>
       ) : null}
 
