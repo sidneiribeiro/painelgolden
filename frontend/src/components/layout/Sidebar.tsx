@@ -5,6 +5,7 @@ import {
   Download,
   Film,
   HardDriveDownload,
+  Key,
   LayoutDashboard,
   Layers,
   LogOut,
@@ -56,6 +57,7 @@ const Icons = {
   asaas: <CreditCard className="w-5 h-5" />,
   backups: <HardDriveDownload className="w-5 h-5" />,
   import: <Download className="w-5 h-5" />,
+  tmdb: <Key className="w-5 h-5" />,
   logout: <LogOut className="w-5 h-5" />,
 };
 
@@ -63,7 +65,7 @@ const Icons = {
 export const ALL_MENU_KEYS = [
   'dashboard', 'customers', 'financial', 'billing_report', 'billing_hierarchy',
   'packages', 'bouquets', 'users', 'resellers', 'vod', 'live', 'marketing', 'premium',
-  'notifications', 'panel_settings', 'asaas', 'backups', 'import_sigma', 'xui_connection', 'core'
+  'notifications', 'panel_settings', 'tmdb_keys', 'asaas', 'backups', 'import_sigma', 'xui_connection', 'core'
 ];
 
 // Labels
@@ -78,6 +80,7 @@ export const MENU_KEY_LABELS: Record<string, string> = {
   premium: 'Premium',
   notifications: 'Notificações',
   panel_settings: 'Config. do Painel',
+  tmdb_keys: 'TMDB Keys',
   asaas: 'Pagamentos',
   backups: 'Backups',
   import_sigma: 'Importar SIGMA',
@@ -109,6 +112,7 @@ const managementItems: NavItem[] = [
   { path: '/users', label: 'Usuários', icon: Icons.users, key: 'users', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/settings/access-groups', label: 'Grupos de Acesso', icon: Icons.settings, key: 'access_groups', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/settings/panel', label: 'Configurações', icon: Icons.panel, key: 'panel_settings' },
+  { path: '/settings/tmdb-keys', label: 'TMDB Keys', icon: Icons.tmdb, key: 'tmdb_keys', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/backups', label: 'Backups', icon: Icons.backups, key: 'backups', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
   { path: '/settings/asaas', label: 'Pagamentos', icon: Icons.asaas, key: 'asaas', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
 ];

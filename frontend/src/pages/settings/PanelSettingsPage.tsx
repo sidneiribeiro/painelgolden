@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 
 interface PanelSettings {
   id: string;
-  panelName: string;
+  panelName: string | null;
   logoUrl: string | null;
   publicBaseUrl?: string | null;
 }
@@ -29,7 +29,7 @@ export function PanelSettingsPage() {
 
   useEffect(() => {
     if (settings) {
-      setPanelName(settings.panelName);
+      setPanelName(settings.panelName || '');
       setPublicBaseUrl(settings.publicBaseUrl || '');
       if (settings.logoUrl) {
         setLogoPreview(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}${settings.logoUrl}`);
@@ -182,7 +182,7 @@ export function PanelSettingsPage() {
           <Button
             onClick={() => updateNameMutation.mutate(panelName)}
             loading={updateNameMutation.isPending}
-            disabled={!panelName.trim() || panelName === settings?.panelName}
+            disabled={!(panelName || '').trim() || (panelName || '') === (settings?.panelName || '')}
           >
             Salvar Nome
           </Button>
