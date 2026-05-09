@@ -96,10 +96,13 @@ const navItems: NavItem[] = [
 
 const serverItems: NavItem[] = [
   { path: '/core', label: 'Xtream Novo', icon: Icons.core, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=bouquets', label: 'Categorias', icon: Icons.bouquets, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=packages', label: 'Pacotes', icon: Icons.packages, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=lines', label: 'Linhas', icon: Icons.customers, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
 ];
 
 const bouquetItems: NavItem[] = [
-  { path: '/bouquets', label: 'Categorias', icon: Icons.bouquets, key: 'bouquets', roles: ['SUPER_ADMIN', 'ADMIN'] },
+  { path: '/bouquets', label: 'Gerir Bouquets', icon: Icons.bouquets, key: 'bouquets', roles: ['SUPER_ADMIN', 'ADMIN'] },
 ];
 
 const contentItems: NavItem[] = [
@@ -283,10 +286,10 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
           </div>
         )}
 
-        {/* Categorias */}
+        {/* Bouquets */}
         {filterByRole(bouquetItems).length > 0 && (
           <div className="mb-6">
-            <p className="text-[10px] uppercase text-zinc-400 dark:text-zinc-500 font-semibold tracking-wider px-4 mb-2">Categorias</p>
+            <p className="text-[10px] uppercase text-zinc-400 dark:text-zinc-500 font-semibold tracking-wider px-4 mb-2">Bouquets</p>
             {filterByRole(bouquetItems).map((item) => (
               <NavLink
                 key={item.path}

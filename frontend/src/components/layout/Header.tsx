@@ -11,7 +11,7 @@ const pageTitles: Record<string, string> = {
   '/': 'Dashboard',
   '/customers': 'Clientes',
   '/packages': 'Pacotes',
-  '/bouquets': 'Categorias',
+  '/bouquets': 'Bouquets',
   '/bouquets-xui': 'Bouquets',
   '/users': 'Usuários',
   '/settings/notifications': 'Notificações',
