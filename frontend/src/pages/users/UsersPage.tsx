@@ -103,7 +103,7 @@ export function UsersPage() {
   const queryClient = useQueryClient();
   const currentUser = useAuthStore((s) => s.user);
   const canManageUserPermissions = ['SUPER_ADMIN', 'ADMIN'].includes(currentUser?.role || '');
-  const canCreateUsers = ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'].includes(currentUser?.role || '');
+  const canCreateUsers = ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'].includes(currentUser?.role || '');
   const [modalOpen, setModalOpen] = useState(false);
   const [creditsModalOpen, setCreditsModalOpen] = useState(false);
   const [accessGroupModalOpen, setAccessGroupModalOpen] = useState(false);
@@ -405,19 +405,20 @@ export function UsersPage() {
         )}
       </div>
 
-      {/* Filtro por Revendedor Pai */}
-      <div className="mb-2">
-        <ResellerTreeDropdown
-          value={selectedResellerId}
-          onChange={(id, name) => {
-            setSelectedResellerId(id);
-            setSelectedResellerName(name);
-            setCurrentPage(1);
-          }}
-          placeholder="Todos os revendedores"
-          allOptionLabel="Todos os revendedores"
-        />
-      </div>
+      {['SUPER_ADMIN', 'ADMIN'].includes(currentUser?.role || '') ? (
+        <div className="mb-2">
+          <ResellerTreeDropdown
+            value={selectedResellerId}
+            onChange={(id, name) => {
+              setSelectedResellerId(id);
+              setSelectedResellerName(name);
+              setCurrentPage(1);
+            }}
+            placeholder="Todos os revendedores"
+            allOptionLabel="Todos os revendedores"
+          />
+        </div>
+      ) : null}
 
       {/* Filtros */}
       <div className="grid grid-cols-2 sm:flex gap-2 lg:gap-4">
@@ -433,8 +434,8 @@ export function UsersPage() {
           className="sm:w-40"
         >
           <option value="">Todos os tipos</option>
-          <option value="ADMIN">Admin</option>
-          <option value="MASTER_RESELLER">Master Revenda</option>
+          {['SUPER_ADMIN'].includes(currentUser?.role || '') ? <option value="ADMIN">Admin</option> : null}
+          {['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'].includes(currentUser?.role || '') ? <option value="MASTER_RESELLER">Master Revenda</option> : null}
           <option value="RESELLER">Revenda</option>
         </Select>
         <Select
@@ -709,7 +710,7 @@ export function UsersPage() {
                   onChange={(e) => setForm({ ...form, role: e.target.value })}
                 >
                   {currentUser?.role === 'SUPER_ADMIN' && <option value="ADMIN">Admin</option>}
-                  {['SUPER_ADMIN', 'ADMIN'].includes(currentUser?.role || '') && (
+                  {['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'].includes(currentUser?.role || '') && (
                     <option value="MASTER_RESELLER">Master Revenda</option>
                   )}
                   <option value="RESELLER">Revenda</option>

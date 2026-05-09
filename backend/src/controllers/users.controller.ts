@@ -123,6 +123,8 @@ export const getAll = asyncHandler(async (req: Request, res: Response) => {
   const where: any = {};
   const currentUser = req.user!;
 
+  const isAdmin = currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'ADMIN';
+
   // Filtro por role
   if (role) {
     where.role = role;
@@ -145,14 +147,13 @@ export const getAll = asyncHandler(async (req: Request, res: Response) => {
   // SUPER_ADMIN vê TODOS os usuários (sem restrições de hierarquia)
   // Apenas aplica filtros opcionais se não for SUPER_ADMIN
   if (currentUser.role !== 'SUPER_ADMIN') {
-    // MASTER_RESELLER só vê suas sub-revendas (RESELLER)
+    // MASTER_RESELLER vê a si mesmo + seus filhos (revendas e master revendas)
     if (currentUser.role === 'MASTER_RESELLER') {
-      where.parentId = currentUser.userId;
-      where.role = 'RESELLER'; // Master só vê seus revendas
+      where.OR = [{ id: currentUser.userId }, { parentId: currentUser.userId }];
     }
-    // RESELLER não vê outros usuários (apenas seus próprios dados via getById)
+    // RESELLER vê a si mesmo + seus filhos (revendas)
     else if (currentUser.role === 'RESELLER') {
-      where.id = currentUser.userId; // Só vê a si mesmo
+      where.OR = [{ id: currentUser.userId }, { parentId: currentUser.userId }];
     }
     // Se especificou parentId (e não é SUPER_ADMIN)
     else if (parentId) {
@@ -162,6 +163,11 @@ export const getAll = asyncHandler(async (req: Request, res: Response) => {
     // Admin e Master não veem Super Admins
     if (['ADMIN', 'MASTER_RESELLER'].includes(currentUser.role)) {
       where.role = { not: 'SUPER_ADMIN' };
+    }
+
+    // Revendas e master revendas não podem listar ADMIN/SUPER_ADMIN (mesmo se mandarem filtro)
+    if (!isAdmin) {
+      where.role = { in: ['MASTER_RESELLER', 'RESELLER'] };
     }
   } else {
     // SUPER_ADMIN pode especificar parentId como filtro opcional, mas não é obrigatório
@@ -304,9 +310,11 @@ export const getById = asyncHandler(async (req: Request, res: Response) => {
     }
   }
 
-  // RESELLER só pode ver a si mesmo
-  if (currentUser.role === 'RESELLER' && user.id !== currentUser.userId) {
-    throw new AppError(403, 'Sem permissão para visualizar este usuário');
+  // RESELLER pode ver a si mesmo + seus filhos (revendas/master revendas)
+  if (currentUser.role === 'RESELLER') {
+    const isSelf = user.id === currentUser.userId;
+    const isChild = user.parentId === currentUser.userId && ['RESELLER', 'MASTER_RESELLER'].includes(user.role);
+    if (!isSelf && !isChild) throw new AppError(403, 'Sem permissão para visualizar este usuário');
   }
 
   res.json({ data: user });
@@ -326,18 +334,12 @@ export const create = asyncHandler(async (req: Request, res: Response) => {
     throw new AppError(403, 'Apenas Super Admin pode criar Admins');
   }
 
-  if (data.role === 'MASTER_RESELLER' && !['SUPER_ADMIN', 'ADMIN'].includes(currentUser.role)) {
-    throw new AppError(403, 'Sem permissão para criar Master Reseller');
+  if (data.role === 'MASTER_RESELLER' && !['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'].includes(currentUser.role)) {
+    throw new AppError(403, 'Sem permissão para criar Master Revenda');
   }
 
-  // MASTER_RESELLER só pode criar RESELLER
-  if (currentUser.role === 'MASTER_RESELLER' && data.role !== 'RESELLER') {
-    throw new AppError(403, 'Master Reseller só pode criar Revendas');
-  }
-
-  // RESELLER não pode criar usuários
-  if (currentUser.role === 'RESELLER') {
-    throw new AppError(403, 'Revenda não pode criar usuários');
+  if (currentUser.role === 'RESELLER' && data.role !== 'RESELLER') {
+    throw new AppError(403, 'Revenda só pode criar Revendas');
   }
 
   // Verifica se username/email já existe
@@ -356,8 +358,8 @@ export const create = asyncHandler(async (req: Request, res: Response) => {
 
   // Define o parent
   let parentId: string | null = null;
-  if (data.role === 'RESELLER') {
-    if (currentUser.role === 'MASTER_RESELLER') {
+  if (['RESELLER', 'MASTER_RESELLER'].includes(data.role)) {
+    if (['MASTER_RESELLER', 'RESELLER'].includes(currentUser.role)) {
       parentId = currentUser.userId;
     } else if (currentUser.role === 'ADMIN' || currentUser.role === 'SUPER_ADMIN') {
       parentId = data.parentId || currentUser.userId;
@@ -371,7 +373,7 @@ export const create = asyncHandler(async (req: Request, res: Response) => {
       if (!parent) {
         throw new AppError(400, 'Revendedor pai não encontrado');
       }
-      if (!['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'].includes(parent.role)) {
+      if (!['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'].includes(parent.role)) {
         throw new AppError(400, 'Revendedor pai inválido');
       }
       if (currentUser.role === 'ADMIN' && parent.role === 'SUPER_ADMIN') {
@@ -379,6 +381,9 @@ export const create = asyncHandler(async (req: Request, res: Response) => {
       }
     }
   }
+
+  const canCreateResellers =
+    canManageUserPermissions ? data.canCreateResellers : ['MASTER_RESELLER', 'RESELLER'].includes(data.role);
 
   const user = await prisma.user.create({
     data: {
@@ -393,7 +398,7 @@ export const create = asyncHandler(async (req: Request, res: Response) => {
       credits: data.credits,
       parentId,
       accessGroupId: canManageUserPermissions ? (data.accessGroupId || null) : undefined,
-      canCreateResellers: canManageUserPermissions ? data.canCreateResellers : undefined,
+      canCreateResellers,
       maxSubResellers: canManageUserPermissions ? data.maxSubResellers : undefined,
       commissionPercent: canManageUserPermissions ? data.commissionPercent : undefined,
       maxTrialsPerDay: data.maxTrialsPerDay,
@@ -464,13 +469,16 @@ export const update = asyncHandler(async (req: Request, res: Response) => {
     }
   }
 
-  // RESELLER só pode editar a si mesmo (e não pode alterar role ou créditos)
+  // RESELLER pode editar a si mesmo + seus filhos (sem alterar role/créditos)
   if (currentUser.role === 'RESELLER') {
-    if (user.id !== currentUser.userId) {
-      throw new AppError(403, 'Sem permissão para editar este usuário');
+    const isSelf = user.id === currentUser.userId;
+    const isChild = user.parentId === currentUser.userId && ['RESELLER', 'MASTER_RESELLER'].includes(user.role);
+    if (!isSelf && !isChild) throw new AppError(403, 'Sem permissão para editar este usuário');
+    if (data.role || data.credits !== undefined) {
+      throw new AppError(403, 'Revenda não pode alterar role ou créditos');
     }
-    if (data.role || data.credits !== undefined || data.status) {
-      throw new AppError(403, 'Revenda não pode alterar role, créditos ou status');
+    if (isSelf && data.status) {
+      throw new AppError(403, 'Revenda não pode alterar o próprio status');
     }
   }
 

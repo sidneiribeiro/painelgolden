@@ -89,8 +89,8 @@ export const MENU_KEY_LABELS: Record<string, string> = {
 };
 
 // Default permissions
-const DEFAULT_RESELLER_KEYS = ['dashboard', 'notifications', 'panel_settings', 'core'];
-const DEFAULT_MASTER_RESELLER_KEYS = ['dashboard', 'notifications', 'panel_settings', 'asaas', 'backups', 'core'];
+const DEFAULT_RESELLER_KEYS = ['dashboard', 'customers', 'users', 'notifications', 'core'];
+const DEFAULT_MASTER_RESELLER_KEYS = ['dashboard', 'customers', 'users', 'notifications', 'core'];
 
 // Navigation items
 const navItems: NavItem[] = [
@@ -109,7 +109,7 @@ const bouquetItems: NavItem[] = [
 ];
 
 const managementItems: NavItem[] = [
-  { path: '/users', label: 'Revendedores', icon: Icons.users, key: 'users', roles: ['SUPER_ADMIN', 'ADMIN'] },
+  { path: '/users', label: 'Revendedores', icon: Icons.users, key: 'users', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
   { path: '/settings/access-groups', label: 'Grupos de Acesso', icon: Icons.settings, key: 'access_groups', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/settings/panel', label: 'Configurações', icon: Icons.panel, key: 'panel_settings' },
   { path: '/settings/tmdb-keys', label: 'TMDB Keys', icon: Icons.tmdb, key: 'tmdb_keys', roles: ['SUPER_ADMIN', 'ADMIN'] },
@@ -140,7 +140,6 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
 
   const effectivePermissions: string[] | null = (() => {
     if (['SUPER_ADMIN', 'ADMIN'].includes(userRole)) return null;
-    if (userMenuPermissions && userMenuPermissions.length > 0) return userMenuPermissions;
     if (userRole === 'MASTER_RESELLER') return DEFAULT_MASTER_RESELLER_KEYS;
     return DEFAULT_RESELLER_KEYS;
   })();
