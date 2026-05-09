@@ -585,7 +585,7 @@ export async function startScheduler() {
     }, { timezone: 'America/Sao_Paulo' });
   }
 
-  const edgeMonitorEnabled = String(process.env.EDGE_MONITOR_ENABLED || '').trim().toLowerCase() !== 'false';
+  const edgeMonitorEnabled = String(process.env.EDGE_MONITOR_ENABLED || '').trim().toLowerCase() === 'true';
   const alertCooldownMin = parseInt(String(process.env.EDGE_MONITOR_ALERT_COOLDOWN_MIN || '15'), 10);
   const cooldownMs = (Number.isFinite(alertCooldownMin) ? alertCooldownMin : 15) * 60_000;
   const warnCpu = parseInt(String(process.env.EDGE_MONITOR_CPU_WARN || '90'), 10);
@@ -593,52 +593,56 @@ export async function startScheduler() {
 
   if (edgeMonitorEnabled) {
     edgeMonitorJob = cron.schedule('*/1 * * * *', async () => {
-      const edges = await prisma.coreEdgeServer.findMany({
-        where: { isActive: true },
-        select: { id: true, name: true, domain: true, ip: true, httpPort: true, httpsPort: true, edgeTokenEnc: true },
-        orderBy: [{ createdAt: 'asc' }],
-      });
+      try {
+        const edges = await prisma.coreEdgeServer.findMany({
+          where: { isActive: true },
+          select: { id: true, name: true, domain: true, ip: true, httpPort: true, httpsPort: true, edgeTokenEnc: true },
+          orderBy: [{ createdAt: 'asc' }],
+        });
 
-      for (const e of edges) {
-        const r = await fetchEdgeMetrics(e);
-        const metrics = r.metrics || {};
-        const cpu = typeof metrics.cpuPercent === 'number' ? metrics.cpuPercent : null;
-        const mem = typeof metrics.memPercent === 'number' ? metrics.memPercent : null;
-        const flowsOff = typeof metrics.flowsOff === 'number' ? metrics.flowsOff : null;
-        const flowsOn = typeof metrics.flowsOn === 'number' ? metrics.flowsOn : null;
-        const conns = typeof metrics.activeConnections === 'number' ? metrics.activeConnections : null;
+        for (const e of edges) {
+          const r = await fetchEdgeMetrics(e);
+          const metrics = r.metrics || {};
+          const cpu = typeof metrics.cpuPercent === 'number' ? metrics.cpuPercent : null;
+          const mem = typeof metrics.memPercent === 'number' ? metrics.memPercent : null;
+          const flowsOff = typeof metrics.flowsOff === 'number' ? metrics.flowsOff : null;
+          const flowsOn = typeof metrics.flowsOn === 'number' ? metrics.flowsOn : null;
+          const conns = typeof metrics.activeConnections === 'number' ? metrics.activeConnections : null;
 
-        const bad =
-          !r.ok ||
-          (typeof flowsOff === 'number' && flowsOff > 0) ||
-          (typeof cpu === 'number' && Number.isFinite(warnCpu) && cpu >= warnCpu) ||
-          (typeof mem === 'number' && Number.isFinite(warnMem) && mem >= warnMem);
+          const bad =
+            !r.ok ||
+            (typeof flowsOff === 'number' && flowsOff > 0) ||
+            (typeof cpu === 'number' && Number.isFinite(warnCpu) && cpu >= warnCpu) ||
+            (typeof mem === 'number' && Number.isFinite(warnMem) && mem >= warnMem);
 
-        const prev = edgeMonitorConsecutiveBad.get(e.id) || 0;
-        const next = bad ? prev + 1 : 0;
-        edgeMonitorConsecutiveBad.set(e.id, next);
+          const prev = edgeMonitorConsecutiveBad.get(e.id) || 0;
+          const next = bad ? prev + 1 : 0;
+          edgeMonitorConsecutiveBad.set(e.id, next);
 
-        if (!bad) continue;
-        if (next < 2) continue;
+          if (!bad) continue;
+          if (next < 2) continue;
 
-        const last = edgeMonitorLastAlertAt.get(e.id) || 0;
-        if (Date.now() - last < cooldownMs) continue;
-        edgeMonitorLastAlertAt.set(e.id, Date.now());
+          const last = edgeMonitorLastAlertAt.get(e.id) || 0;
+          if (Date.now() - last < cooldownMs) continue;
+          edgeMonitorLastAlertAt.set(e.id, Date.now());
 
-        const host = (e.domain || e.ip || '').trim() || e.name;
-        const title = `Alerta Balance: ${e.name}`;
-        const msg =
-          `⚠️ ALERTA BALANCE\n\n` +
-          `Servidor: ${e.name}\n` +
-          `Host: ${host}\n` +
-          `Status: ${r.ok ? 'OK (DEGRADADO)' : 'OFFLINE'}${r.error ? ` (${r.error})` : ''}\n` +
-          `CPU: ${cpu === null ? '-' : `${Math.round(cpu)}%`}\n` +
-          `RAM: ${mem === null ? '-' : `${Math.round(mem)}%`}\n` +
-          `Conexões: ${conns === null ? '-' : conns}\n` +
-          `Fluxos ON/OFF: ${flowsOn === null ? '-' : flowsOn}/${flowsOff === null ? '-' : flowsOff}\n\n` +
-          `Abra Xtream Novo → Monitoramento e use "Reparar" se necessário.`;
+          const host = (e.domain || e.ip || '').trim() || e.name;
+          const title = `Alerta Balance: ${e.name}`;
+          const msg =
+            `⚠️ ALERTA BALANCE\n\n` +
+            `Servidor: ${e.name}\n` +
+            `Host: ${host}\n` +
+            `Status: ${r.ok ? 'OK (DEGRADADO)' : 'OFFLINE'}${r.error ? ` (${r.error})` : ''}\n` +
+            `CPU: ${cpu === null ? '-' : `${Math.round(cpu)}%`}\n` +
+            `RAM: ${mem === null ? '-' : `${Math.round(mem)}%`}\n` +
+            `Conexões: ${conns === null ? '-' : conns}\n` +
+            `Fluxos ON/OFF: ${flowsOn === null ? '-' : flowsOn}/${flowsOff === null ? '-' : flowsOff}\n\n` +
+            `Abra Xtream Novo → Monitoramento e use "Reparar" se necessário.`;
 
-        await sendAdminAlert(title, msg);
+          await sendAdminAlert(title, msg);
+        }
+      } catch (e: any) {
+        logger.warn(`[EdgeMonitor] Falha ao coletar/enviar alertas: ${e?.message || e}`);
       }
     }, { timezone: 'America/Sao_Paulo' });
   }
