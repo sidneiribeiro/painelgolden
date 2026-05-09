@@ -1419,26 +1419,11 @@ export function CoreXtreamPage() {
       const res = await api.post('/core/bouquets', payload);
       return res.data;
     },
-    onSuccess: (result: any) => {
+    onSuccess: () => {
       toast.success('Categoria criada');
       queryClient.invalidateQueries({ queryKey: ['core-bouquets'] });
       queryClient.invalidateQueries({ queryKey: ['core-streams'] });
       setBouquetModalOpen(false);
-
-      const created = result?.data;
-      if (created?.id) {
-        setEditingPackage(null);
-        setPackageForm({
-          name: '',
-          durationDays: 30,
-          connections: 1,
-          priceCents: 0,
-          isActive: true,
-          bouquetIds: [created.id],
-        });
-        setPackageModalOpen(true);
-        setActiveTab('packages');
-      }
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error || 'Erro ao criar categoria');
@@ -1495,27 +1480,10 @@ export function CoreXtreamPage() {
       const res = await api.post('/core/packages', payload);
       return res.data;
     },
-    onSuccess: (result: any) => {
+    onSuccess: () => {
       toast.success('Pacote criado');
       queryClient.invalidateQueries({ queryKey: ['core-packages'] });
       setPackageModalOpen(false);
-
-      const created = result?.data;
-      if (created?.id) {
-        const now = new Date();
-        const d = new Date(now.getTime() + Math.max(0, Number(created.durationDays || 30)) * 24 * 60 * 60 * 1000);
-        setEditingLine(null);
-        setLineForm({
-          username: '',
-          password: '',
-          expiresAt: toDateInput(d.toISOString()),
-          connections: Math.max(1, Number(created.connections || 1)),
-          status: 'ACTIVE',
-          packageId: String(created.id),
-        });
-        setLineModalOpen(true);
-        setActiveTab('lines');
-      }
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error || 'Erro ao criar pacote');
