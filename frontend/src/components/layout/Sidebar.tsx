@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import {
   Bell,
   CreditCard,
@@ -140,6 +140,7 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
   const logout = useAuthStore((state) => state.logout);
   const userRole = user?.role || 'RESELLER';
   const { data: panelSettings } = usePanelSettings();
+  const location = useLocation();
 
   const userMenuPermissions: string[] | null = (() => {
     if (!user?.menuPermissions) return null;
@@ -178,6 +179,64 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
         ? 'bg-gradient-to-r from-cyan-500/15 to-violet-500/15 text-cyan-600 dark:text-cyan-400 font-medium'
         : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/50 hover:text-zinc-900 dark:hover:text-white'
     }`;
+
+  const parseItem = (path: string) => {
+    const qIndex = path.indexOf('?');
+    const pathname = qIndex >= 0 ? path.slice(0, qIndex) : path;
+    const search = qIndex >= 0 ? path.slice(qIndex + 1) : '';
+    return { pathname, params: new URLSearchParams(search) };
+  };
+
+  const computeCoreActivePath = () => {
+    const visible = filterByRole(serverItems);
+    const currentPathname = location.pathname;
+    const currentParams = new URLSearchParams(location.search || '');
+
+    let bestPath: string | null = null;
+    let bestScore = -1;
+
+    for (const it of visible) {
+      const parsed = parseItem(it.path);
+      if (parsed.pathname !== currentPathname) continue;
+
+      let ok = true;
+      let score = 0;
+      for (const [k, v] of parsed.params.entries()) {
+        if (currentParams.get(k) !== v) {
+          ok = false;
+          break;
+        }
+        score += 1;
+      }
+      if (!ok) continue;
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestPath = it.path;
+      }
+    }
+
+    return bestPath;
+  };
+
+  const coreActivePath = computeCoreActivePath();
+
+  const isItemActive = (item: NavItem) => {
+    const parsed = parseItem(item.path);
+    if (parsed.pathname !== location.pathname) return false;
+
+    if (item.path.startsWith('/core')) {
+      return coreActivePath === item.path;
+    }
+
+    if ([...parsed.params.keys()].length === 0) return true;
+
+    const currentParams = new URLSearchParams(location.search || '');
+    for (const [k, v] of parsed.params.entries()) {
+      if (currentParams.get(k) !== v) return false;
+    }
+    return true;
+  };
 
   return (
     <aside
@@ -227,7 +286,7 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
             <NavLink
               key={item.path}
               to={item.path}
-              className={navLinkClass}
+              className={navLinkClass({ isActive: isItemActive(item) })}
               end={item.path === '/'}
               onClick={handleNavClick}
             >
@@ -245,7 +304,7 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
               <NavLink
                 key={item.path}
                 to={item.path}
-                className={navLinkClass}
+                className={navLinkClass({ isActive: isItemActive(item) })}
                 onClick={handleNavClick}
               >
                 <span className="text-zinc-500 dark:text-zinc-400">{item.icon}</span>
@@ -263,7 +322,7 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
               <NavLink
                 key={item.path}
                 to={item.path}
-                className={navLinkClass}
+                className={navLinkClass({ isActive: isItemActive(item) })}
                 onClick={handleNavClick}
               >
                 <span className="text-zinc-500 dark:text-zinc-400">{item.icon}</span>
@@ -281,7 +340,7 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
               <NavLink
                 key={item.path}
                 to={item.path}
-                className={navLinkClass}
+                className={navLinkClass({ isActive: isItemActive(item) })}
                 onClick={handleNavClick}
               >
                 <span className="text-zinc-500 dark:text-zinc-400">{item.icon}</span>
