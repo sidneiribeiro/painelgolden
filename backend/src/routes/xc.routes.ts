@@ -12,6 +12,11 @@ import {
 
 const router = Router();
 
+// Evita conflito com URLs do painel (SPA) que usam "/live/..." e batem aqui por causa do Xtream.
+// Essas rotas NÃO são streaming e podem ser redirecionadas com segurança.
+router.get('/live/streams', (req, res) => res.redirect(302, '/livetv/streams'));
+router.get('/live/import', (req, res) => res.redirect(302, '/livetv/import'));
+
 router.get('/get.php', getM3U);
 router.get('/player_api.php', getPlayerApi);
 router.get('/panel_api.php', getPlayerApi);
