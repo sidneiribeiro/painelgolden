@@ -1208,9 +1208,22 @@ export function CoreXtreamPage() {
   };
   const servers = serversData?.data || [];
   const bouquets = bouquetsData?.data || [];
-  const bouquetsForStreams = useMemo(() => bouquets.filter((b) => (b._count?.streams || 0) > 0), [bouquets]);
-  const bouquetsForVod = useMemo(() => bouquets.filter((b) => (b._count?.vodItems || 0) > 0), [bouquets]);
-  const bouquetsForSeries = useMemo(() => bouquets.filter((b) => (b._count?.series || 0) > 0), [bouquets]);
+  const bouquetsByKind = useMemo(() => {
+    const out = { streams: [] as CoreBouquet[], vod: [] as CoreBouquet[], series: [] as CoreBouquet[] };
+    for (const b of bouquets) {
+      const streamsCount = b._count?.streams || 0;
+      const vodCount = b._count?.vodItems || 0;
+      const seriesCount = b._count?.series || 0;
+      if (streamsCount > 0) out.streams.push(b);
+      else if (vodCount > 0) out.vod.push(b);
+      else if (seriesCount > 0) out.series.push(b);
+    }
+    return out;
+  }, [bouquets]);
+
+  const bouquetsForStreams = bouquetsByKind.streams;
+  const bouquetsForVod = bouquetsByKind.vod;
+  const bouquetsForSeries = bouquetsByKind.series;
   const packages = packagesData?.data || [];
   const lines = linesData?.data || [];
   const vodItems = vodData?.data || [];
