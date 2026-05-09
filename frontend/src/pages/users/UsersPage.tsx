@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button, Card, Input, Modal, Badge, Spinner, Select } from '../../components/ui';
 import { Pagination } from '../../components/ui/Pagination';
@@ -99,6 +99,21 @@ const statusLabels: Record<string, string> = {
   BANNED: 'Banido',
 };
 
+const defaultResellerWelcomeTemplate = `🎉 Bem-vindo(a)!
+
+Seu acesso ao painel foi criado:
+
+🌐 Painel: {panel_url}
+👤 Usuário: {username}
+🔑 Senha: {password}
+🏷️ Perfil: {role}
+
+⚙️ Próximos passos:
+1) Entre no painel e vá em Configurações
+2) Coloque seu logo e sua URL pública (sua DNS/domínio)
+
+Se precisar de ajuda, fale conosco.`;
+
 export function UsersPage() {
   const queryClient = useQueryClient();
   const currentUser = useAuthStore((s) => s.user);
@@ -125,6 +140,40 @@ export function UsersPage() {
   const [selectedResellerName, setSelectedResellerName] = useState('');
   const [sortBy, setSortBy] = useState('createdAt');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const resellerWelcomeStorageKey = useMemo(() => {
+    const id = currentUser?.id || 'default';
+    return `reseller_welcome_template:${id}`;
+  }, [currentUser?.id]);
+
+  const [resellerWelcomeModalOpen, setResellerWelcomeModalOpen] = useState(false);
+  const [resellerWelcomeTemplate, setResellerWelcomeTemplate] = useState(defaultResellerWelcomeTemplate);
+  const [resellerWelcomeTarget, setResellerWelcomeTarget] = useState<{ username: string; password: string; role: string; panelUrl: string; whatsapp?: string } | null>(null);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(resellerWelcomeStorageKey);
+      if (saved && saved.trim()) setResellerWelcomeTemplate(saved);
+      else setResellerWelcomeTemplate(defaultResellerWelcomeTemplate);
+    } catch {
+      setResellerWelcomeTemplate(defaultResellerWelcomeTemplate);
+    }
+  }, [resellerWelcomeStorageKey]);
+
+  const resellerWelcomeMessage = useMemo(() => {
+    if (!resellerWelcomeTarget) return '';
+    const vars: Record<string, string> = {
+      panel_url: resellerWelcomeTarget.panelUrl,
+      username: resellerWelcomeTarget.username,
+      password: resellerWelcomeTarget.password,
+      role: resellerWelcomeTarget.role,
+    };
+    let out = resellerWelcomeTemplate || '';
+    for (const [k, v] of Object.entries(vars)) {
+      out = out.replace(new RegExp(`\\{${k}\\}`, 'g'), v);
+    }
+    return out;
+  }, [resellerWelcomeTemplate, resellerWelcomeTarget]);
 
   // Atualizar filtro quando debouncedSearch mudar
   useEffect(() => {
@@ -193,9 +242,24 @@ export function UsersPage() {
       });
       return res.data;
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
       toast.success('Usuário criado!');
+      const origin = (() => {
+        try {
+          return window.location.origin || '';
+        } catch {
+          return '';
+        }
+      })();
+      setResellerWelcomeTarget({
+        username: variables.username,
+        password: variables.password,
+        role: roleLabels[variables.role] || String(variables.role),
+        panelUrl: origin || '',
+        whatsapp: variables.whatsapp || undefined,
+      });
+      setResellerWelcomeModalOpen(true);
       closeModal();
     },
     onError: (error: any) => {
@@ -1121,6 +1185,101 @@ export function UsersPage() {
             >
               Salvar Grupo
             </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={resellerWelcomeModalOpen}
+        onClose={() => {
+          setResellerWelcomeModalOpen(false);
+          setResellerWelcomeTarget(null);
+        }}
+        title="🎉 Boas-vindas da Revenda"
+        size="lg"
+      >
+        <div className="space-y-4">
+          <div className="text-sm text-zinc-600 dark:text-zinc-400">
+            Ajuste o texto e copie para enviar no WhatsApp/Telegram para a revenda.
+          </div>
+
+          <div className="space-y-2">
+            <div className="text-sm font-medium text-zinc-900 dark:text-white">Template</div>
+            <div className="text-xs text-zinc-600 dark:text-zinc-400">
+              Variáveis: {'{panel_url}'} {'{username}'} {'{password}'} {'{role}'}
+            </div>
+            <textarea
+              value={resellerWelcomeTemplate}
+              onChange={(e) => setResellerWelcomeTemplate(e.target.value)}
+              className="w-full min-h-[180px] rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white"
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  try {
+                    window.localStorage.setItem(resellerWelcomeStorageKey, resellerWelcomeTemplate || '');
+                    toast.success('Template salvo');
+                  } catch {
+                    toast.error('Não foi possível salvar o template');
+                  }
+                }}
+              >
+                Salvar template
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setResellerWelcomeTemplate(defaultResellerWelcomeTemplate);
+                  try {
+                    window.localStorage.setItem(resellerWelcomeStorageKey, defaultResellerWelcomeTemplate);
+                  } catch {}
+                }}
+              >
+                Restaurar padrão
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="text-sm font-medium text-zinc-900 dark:text-white">Mensagem pronta</div>
+            <textarea
+              value={resellerWelcomeMessage}
+              readOnly
+              onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+              className="w-full min-h-[180px] rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 text-sm text-zinc-900 dark:text-white"
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(resellerWelcomeMessage);
+                    toast.success('Mensagem copiada!');
+                  } catch {
+                    toast.error('Erro ao copiar. Copie manualmente.');
+                  }
+                }}
+                disabled={!resellerWelcomeMessage}
+              >
+                Copiar
+              </Button>
+              <Button
+                onClick={() => {
+                  const raw = resellerWelcomeTarget?.whatsapp || '';
+                  const phone = String(raw).replace(/[^\d]/g, '');
+                  if (!phone) {
+                    toast.error('Informe o WhatsApp do revendedor no cadastro');
+                    return;
+                  }
+                  const url = `https://wa.me/${phone}?text=${encodeURIComponent(resellerWelcomeMessage)}`;
+                  window.open(url, '_blank', 'noopener,noreferrer');
+                }}
+                disabled={!resellerWelcomeMessage}
+              >
+                Enviar WhatsApp
+              </Button>
+            </div>
           </div>
         </div>
       </Modal>
