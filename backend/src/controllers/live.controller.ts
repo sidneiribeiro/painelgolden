@@ -8,6 +8,8 @@ import { LiveImporterService } from '../services/live/live-importer.service.js';
 import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger('LiveController');
+const HIDDEN_LIVE_CATEGORY_NAMES = new Set(['Conteúdos Atualizados']);
+const HIDDEN_LIVE_STREAM_NAMES = new Set(['Filmes Adicionados', 'Séries Atualizadas']);
 
 async function detectLiveCategoryTable(connection: any): Promise<string> {
   for (const t of ['streams_categories', 'stream_categories']) {
@@ -261,7 +263,13 @@ export const liveController = {
 
         await client.disconnect();
 
-        return res.status(200).json(categories);
+        const filtered = (Array.isArray(categories) ? categories : []).filter((c: any) => {
+          const name = String(c?.category_name || '').trim();
+          if (!name) return false;
+          return !HIDDEN_LIVE_CATEGORY_NAMES.has(name);
+        });
+
+        return res.status(200).json(filtered);
       } catch (error: any) {
         logger.error('[LiveController] Erro detalhado ao buscar categorias:', {
           message: error.message,
@@ -318,6 +326,28 @@ export const liveController = {
 
         const filters: string[] = ['s.type = 1'];
         const params: any[] = [];
+
+        if (HIDDEN_LIVE_STREAM_NAMES.size > 0) {
+          const names = Array.from(HIDDEN_LIVE_STREAM_NAMES);
+          const placeholders = names.map(() => '?').join(', ');
+          filters.push(`s.stream_display_name NOT IN (${placeholders})`);
+          params.push(...names);
+        }
+
+        if (HIDDEN_LIVE_CATEGORY_NAMES.size > 0) {
+          const hidden = Array.from(HIDDEN_LIVE_CATEGORY_NAMES);
+          const placeholders = hidden.map(() => '?').join(', ');
+          const [hiddenCats] = await connection.query<any[]>(
+            `SELECT id FROM ${catTable} WHERE category_type = 'live' AND category_name IN (${placeholders})`,
+            hidden
+          );
+          const ids = (Array.isArray(hiddenCats) ? hiddenCats : []).map((r: any) => Number(r.id)).filter((n: any) => Number.isFinite(n));
+          if (ids.length > 0) {
+            const idPlaceholders = ids.map(() => '?').join(', ');
+            filters.push(`s.category_id NOT IN (${idPlaceholders})`);
+            params.push(...ids);
+          }
+        }
 
         if (keyword && String(keyword).trim()) {
           filters.push('s.stream_display_name LIKE ?');
