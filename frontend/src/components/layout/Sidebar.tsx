@@ -90,7 +90,7 @@ export const MENU_KEY_LABELS: Record<string, string> = {
 
 // Default permissions
 const DEFAULT_RESELLER_KEYS = ['dashboard', 'customers', 'users', 'panel_settings', 'notifications', 'core'];
-const DEFAULT_MASTER_RESELLER_KEYS = ['dashboard', 'customers', 'users', 'panel_settings', 'notifications', 'core'];
+const DEFAULT_MASTER_RESELLER_KEYS = ['dashboard', 'customers', 'users', 'panel_settings', 'notifications', 'core', 'live'];
 
 // Navigation items
 const navItems: NavItem[] = [
@@ -122,6 +122,11 @@ const marketingItems: NavItem[] = [
   { path: '/marketing/banners', label: 'Banners e Vídeos', icon: Icons.marketing, key: 'marketing', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/marketing/jogos-do-dia', label: 'Jogos do Dia', icon: Icons.premium, key: 'marketing', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/marketing/video-promocional', label: 'Vídeo Promocional', icon: Icons.vod, key: 'marketing', roles: ['SUPER_ADMIN', 'ADMIN'] },
+];
+
+const liveItems: NavItem[] = [
+  { path: '/live/streams', label: 'Canais (Live)', icon: Icons.live, key: 'live', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
+  { path: '/live/import', label: 'Importar (Live)', icon: Icons.import, key: 'live', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
 ];
 
 export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
@@ -267,6 +272,24 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
           <div>
             <p className="text-[10px] uppercase text-zinc-400 dark:text-zinc-500 font-semibold tracking-wider px-4 mb-2">Marketing</p>
             {filterByRole(marketingItems).map((item) => (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                className={navLinkClass}
+                onClick={handleNavClick}
+              >
+                <span className="text-zinc-500 dark:text-zinc-400">{item.icon}</span>
+                <span className="text-sm">{item.label}</span>
+              </NavLink>
+            ))}
+          </div>
+        )}
+
+        {/* LIVE TV */}
+        {filterByRole(liveItems).length > 0 && (
+          <div className="mt-6">
+            <p className="text-[10px] uppercase text-zinc-400 dark:text-zinc-500 font-semibold tracking-wider px-4 mb-2">LIVE TV</p>
+            {filterByRole(liveItems).map((item) => (
               <NavLink
                 key={item.path}
                 to={item.path}
