@@ -567,10 +567,9 @@ export function CoreXtreamPage() {
   }, [location.search]);
 
   const setActiveTab = (next: TabKey) => {
-    setTab(next);
     const params = new URLSearchParams(location.search || '');
     params.set('tab', next);
-    navigate({ pathname: location.pathname, search: `?${params.toString()}` }, { replace: true });
+    navigate({ pathname: location.pathname, search: `?${params.toString()}` }, { replace: false });
   };
 
   const { data: billingInfoData } = useQuery<{ data: { isBlocked: boolean; dueDate?: string | null; totalToPay?: number; activeCustomers?: number } }>({
