@@ -7,10 +7,17 @@ FROM node:20-bookworm-slim AS builder
 WORKDIR /app
 
 # Instala ferramentas de build necessárias para dependências nativas
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    gnupg \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg] http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     default-mysql-client \
-    postgresql-client \
+    postgresql-client-16 \
     make \
     g++ \
     pkg-config \
@@ -42,7 +49,14 @@ FROM node:20-bookworm-slim AS runner
 WORKDIR /app
 
 # Instala bibliotecas runtime necessárias para canvas, prisma, e vídeo promocional
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    gnupg \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg] http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     libpango-1.0-0 \
     libpangocairo-1.0-0 \
@@ -51,12 +65,10 @@ RUN apt-get update && apt-get install -y \
     librsvg2-2 \
     libuuid1 \
     openssl \
-    ca-certificates \
     ffmpeg \
     python3 \
     default-mysql-client \
-    postgresql-client \
-    curl \
+    postgresql-client-16 \
     && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp \
     && chmod a+rx /usr/local/bin/yt-dlp \
     && rm -rf /var/lib/apt/lists/*
