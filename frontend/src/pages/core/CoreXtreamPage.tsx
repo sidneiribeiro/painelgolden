@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { Badge, Button, Card, Input, Modal, Select, Spinner } from '../../components/ui';
 import { useAuthStore } from '../../store/authStore';
@@ -488,6 +488,7 @@ export function CoreXtreamPage() {
   const queryClient = useQueryClient();
   const currentUser = useAuthStore((s) => s.user);
   const location = useLocation();
+  const navigate = useNavigate();
   const [tab, setTab] = useState<TabKey>(() => parseTabFromSearch(location.search));
   const [importModalOpen, setImportModalOpen] = useState(false);
 
@@ -564,6 +565,13 @@ export function CoreXtreamPage() {
     const next = parseTabFromSearch(location.search);
     setTab((prev) => (prev === next ? prev : next));
   }, [location.search]);
+
+  const setActiveTab = (next: TabKey) => {
+    setTab(next);
+    const params = new URLSearchParams(location.search || '');
+    params.set('tab', next);
+    navigate({ pathname: location.pathname, search: `?${params.toString()}` }, { replace: true });
+  };
 
   const { data: billingInfoData } = useQuery<{ data: { isBlocked: boolean; dueDate?: string | null; totalToPay?: number; activeCustomers?: number } }>({
     queryKey: ['billing-info'],
@@ -2797,17 +2805,17 @@ export function CoreXtreamPage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2 items-center">
-            <button className={tabButtonClass('lines')} onClick={() => setTab('lines')}>Linhas</button>
-            <button className={tabButtonClass('connections')} onClick={() => setTab('connections')}>Conexões</button>
-            <button className={tabButtonClass('payments')} onClick={() => setTab('payments')}>Pagamentos</button>
-            <button className={tabButtonClass('packages')} onClick={() => setTab('packages')}>Pacotes</button>
-            <button className={tabButtonClass('bouquets')} onClick={() => setTab('bouquets')}>Categorias</button>
-            <button className={tabButtonClass('vod')} onClick={() => setTab('vod')}>VOD</button>
-            <button className={tabButtonClass('series')} onClick={() => setTab('series')}>Séries</button>
-            <button className={tabButtonClass('streams')} onClick={() => setTab('streams')}>Streams</button>
-            <button className={tabButtonClass('servers')} onClick={() => setTab('servers')}>Servidores</button>
-            <button className={tabButtonClass('schedules')} onClick={() => setTab('schedules')}>Agendas</button>
-            <button className={tabButtonClass('epg')} onClick={() => setTab('epg')}>EPG</button>
+            <button className={tabButtonClass('lines')} onClick={() => setActiveTab('lines')}>Linhas</button>
+            <button className={tabButtonClass('connections')} onClick={() => setActiveTab('connections')}>Conexões</button>
+            <button className={tabButtonClass('payments')} onClick={() => setActiveTab('payments')}>Pagamentos</button>
+            <button className={tabButtonClass('packages')} onClick={() => setActiveTab('packages')}>Pacotes</button>
+            <button className={tabButtonClass('bouquets')} onClick={() => setActiveTab('bouquets')}>Categorias</button>
+            <button className={tabButtonClass('vod')} onClick={() => setActiveTab('vod')}>VOD</button>
+            <button className={tabButtonClass('series')} onClick={() => setActiveTab('series')}>Séries</button>
+            <button className={tabButtonClass('streams')} onClick={() => setActiveTab('streams')}>Streams</button>
+            <button className={tabButtonClass('servers')} onClick={() => setActiveTab('servers')}>Servidores</button>
+            <button className={tabButtonClass('schedules')} onClick={() => setActiveTab('schedules')}>Agendas</button>
+            <button className={tabButtonClass('epg')} onClick={() => setActiveTab('epg')}>EPG</button>
             <Button
               variant="outline"
               disabled={isBillingBlocked}
