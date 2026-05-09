@@ -69,6 +69,7 @@ export function LiveImportPage() {
   const [directSource, setDirectSource] = useState<number>(1);
   const [directProxy, setDirectProxy] = useState<number>(0);
   const [selectedServerId, setSelectedServerId] = useState<number>(0);
+  const [updateExistingIcons, setUpdateExistingIcons] = useState(false);
   
   // Estados de preview e mapeamento
   const [showPreview, setShowPreview] = useState(false);
@@ -250,6 +251,7 @@ export function LiveImportPage() {
         directSource,
         directProxy,
         streamServerId: selectedServerId || undefined,
+        updateExistingIcons,
       });
       return res.data;
     },
@@ -693,6 +695,15 @@ export function LiveImportPage() {
                 </div>
               </div>
             )}
+
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={updateExistingIcons}
+                onChange={(e) => setUpdateExistingIcons(e.target.checked)}
+              />
+              Atualizar logos dos canais já existentes
+            </label>
           </div>
 
           {/* Botão Importar */}

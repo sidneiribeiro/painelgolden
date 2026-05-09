@@ -1291,6 +1291,33 @@ export class XUIVodDBClient {
     }
   }
 
+  private async updateLiveChannelIconByName(conn: Connection, name: string, icon: string): Promise<boolean> {
+    const streamIcon = String(icon || '').trim();
+    if (!streamIcon) return false;
+
+    try {
+      const [result] = await conn.query(
+        `UPDATE streams
+         SET stream_icon = ?, updated = NOW()
+         WHERE type = 1
+         AND stream_display_name = ?
+         AND (stream_icon IS NULL OR stream_icon = '' OR stream_icon <> ?)`,
+        [streamIcon, name, streamIcon]
+      );
+      return ((result as any)?.affectedRows || 0) > 0;
+    } catch {
+      const [result] = await conn.query(
+        `UPDATE streams
+         SET stream_icon = ?
+         WHERE type = 1
+         AND stream_display_name = ?
+         AND (stream_icon IS NULL OR stream_icon = '' OR stream_icon <> ?)`,
+        [streamIcon, name, streamIcon]
+      );
+      return ((result as any)?.affectedRows || 0) > 0;
+    }
+  }
+
   /**
    * Importação em massa de canais LIVE (INSERT direto no MySQL)
    * @param channels Array de canais para importar
@@ -1303,14 +1330,16 @@ export class XUIVodDBClient {
     batchSize = 1000, 
     skipDuplicates = true,
     serverId?: number,  // ID do servidor para inserir na tabela streams_servers
-    onDemandMode?: boolean  // true = On-Demand, false = Direct
-  ): Promise<{ inserted: number; errors: number; skipped: number; insertedIds: number[] }> {
+    onDemandMode?: boolean,  // true = On-Demand, false = Direct
+    updateExistingIcons: boolean = false
+  ): Promise<{ inserted: number; errors: number; skipped: number; insertedIds: number[]; updatedIcons: number }> {
     const conn = await this.connect();
     const now = Math.floor(Date.now() / 1000);
     
     let inserted = 0;
     let errors = 0;
     let skipped = 0;
+    let updatedIcons = 0;
     const insertedIds: number[] = [];
 
     try {
@@ -1331,6 +1360,14 @@ export class XUIVodDBClient {
               const exists = await this.checkLiveChannelExists(conn, channel);
               if (exists) {
                 skipped++;
+                if (updateExistingIcons) {
+                  try {
+                    const didUpdate = await this.updateLiveChannelIconByName(conn, channel.stream_display_name, channel.stream_icon || '');
+                    if (didUpdate) updatedIcons++;
+                  } catch (e: any) {
+                    logger.warn(`[XUIVodDB] Erro ao atualizar logo (não crítico): ${e?.message || e}`);
+                  }
+                }
                 logger.debug(`[XUIVodDB] Canal duplicado ignorado: ${channel.stream_display_name}`);
                 continue;
               }
@@ -1496,8 +1533,8 @@ export class XUIVodDBClient {
         }
       }
 
-      logger.info(`[XUIVodDB] Importação de canais LIVE concluída: ${inserted} inseridos, ${errors} erros, ${skipped} duplicados ignorados, ${insertedIds.length} IDs coletados`);
-      return { inserted, errors, skipped, insertedIds };
+      logger.info(`[XUIVodDB] Importação de canais LIVE concluída: ${inserted} inseridos, ${errors} erros, ${skipped} duplicados ignorados, ${updatedIcons} logos atualizadas, ${insertedIds.length} IDs coletados`);
+      return { inserted, errors, skipped, insertedIds, updatedIcons };
     } catch (error: any) {
       logger.error('[XUIVodDB] Erro na importação em massa de canais:', error.message);
       throw error;
@@ -2742,4 +2779,3 @@ export class XUIVodDBClient {
     };
   }
 }
-

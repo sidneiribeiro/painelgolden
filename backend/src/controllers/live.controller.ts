@@ -93,6 +93,7 @@ export const liveController = {
         enableTranscode: req.body.enableTranscode !== undefined ? Number(req.body.enableTranscode) : undefined,
         streamAll: req.body.streamAll !== undefined ? Number(req.body.streamAll) : undefined,
         serverId: req.body.streamServerId ? Number(req.body.streamServerId) : undefined, // ID do servidor de streaming
+        updateExistingIcons: req.body.updateExistingIcons === true,
       };
 
       // Continuar importação em background

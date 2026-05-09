@@ -45,6 +45,7 @@ interface ImportOptions {
   streamAll?: number;           // 0 = desabilitado, 1 = habilitado
   serverId?: number;            // ID do servidor na tabela 'servers'
   importMode?: 'direct' | 'ondemand'; // Modo de importação
+  updateExistingIcons?: boolean;
 }
 
 export class LiveImporterService {
@@ -353,13 +354,20 @@ export class LiveImporterService {
         const progress = 20 + Math.floor((i / channelsData.length) * 70); // 20% a 90%
 
         const onDemandMode = options.importMode === 'ondemand';
-        const result = await this.xuiClient.bulkInsertLiveChannels(batch, batchSize, true, options.serverId, onDemandMode);
+        const result = await this.xuiClient.bulkInsertLiveChannels(
+          batch,
+          batchSize,
+          true,
+          options.serverId,
+          onDemandMode,
+          !!options.updateExistingIcons
+        );
         totalImported += result.inserted;
 
         socketService.updateUserProcess(userId, {
           status: 'processing',
           progress,
-          currentItem: `Importando canais: ${totalImported}/${channelsData.length} (${result.inserted} inseridos, ${result.errors} erros, ${result.skipped} duplicados)...`,
+          currentItem: `Importando canais: ${totalImported}/${channelsData.length} (${result.inserted} inseridos, ${result.errors} erros, ${result.skipped} duplicados, ${result.updatedIcons || 0} logos atualizadas)...`,
           totalItems: channelsData.length,
           processedItems: totalImported,
           addedItems: totalImported,
@@ -438,4 +446,3 @@ export class LiveImporterService {
     }
   }
 }
-
