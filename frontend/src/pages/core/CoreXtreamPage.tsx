@@ -2252,7 +2252,7 @@ export function CoreXtreamPage() {
       return res.data;
     },
     onSuccess: () => {
-      toast.success('Execução iniciada');
+      toast.success('EPG executado');
       queryClient.invalidateQueries({ queryKey: ['core-epg-sources'] });
       queryClient.invalidateQueries({ queryKey: ['core-epg-channels'] });
     },
@@ -5082,6 +5082,7 @@ export function CoreXtreamPage() {
                       <div className="flex flex-col">
                         <span>{s.lastRunAt ? new Date(s.lastRunAt).toLocaleString('pt-BR') : '-'}</span>
                         <span className="text-xs text-zinc-600 dark:text-zinc-400">{s.lastStatus || ''}</span>
+                        {s.lastMessage ? <span className="text-xs text-zinc-600 dark:text-zinc-400 truncate max-w-[280px]" title={s.lastMessage}>{s.lastMessage}</span> : null}
                       </div>
                     </td>
                     <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300 max-w-xs truncate" title={s.xmltvUrl}>

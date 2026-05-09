@@ -4723,14 +4723,51 @@ function parseXmltv(xml: string) {
 }
 
 async function fetchXmltv(url: string, timeoutMs: number) {
-  const resp = await axios.get(url, { responseType: 'arraybuffer', timeout: timeoutMs, validateStatus: () => true });
+  const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+  const doFetch = (opts?: { insecureTls?: boolean }) =>
+    axios.get(url, {
+      responseType: 'arraybuffer',
+      timeout: timeoutMs,
+      maxRedirects: 5,
+      validateStatus: () => true,
+      httpsAgent: opts?.insecureTls ? httpsAgent : undefined,
+    });
+
+  let resp: any;
+  try {
+    resp = await doFetch({ insecureTls: false });
+  } catch (error: any) {
+    const code = String(error?.code || '');
+    const msg = String(error?.message || '');
+    const isTlsError =
+      code.includes('CERT') ||
+      msg.includes('self signed certificate') ||
+      msg.includes('unable to verify the first certificate') ||
+      msg.includes('UNABLE_TO_VERIFY_LEAF_SIGNATURE') ||
+      msg.includes('DEPTH_ZERO_SELF_SIGNED_CERT');
+    if (isTlsError) {
+      resp = await doFetch({ insecureTls: true });
+    } else {
+      throw error;
+    }
+  }
+
+  if (!resp || typeof resp.status !== 'number') {
+    throw new AppError(502, 'Falha ao baixar XMLTV');
+  }
   if (resp.status >= 400) {
     throw new AppError(502, `Falha ao baixar XMLTV (${resp.status})`);
   }
+
   let buf = Buffer.from(resp.data);
   const enc = String(resp.headers?.['content-encoding'] || '').toLowerCase();
   const isGz = enc.includes('gzip') || url.toLowerCase().endsWith('.gz') || (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b);
-  if (isGz) buf = zlib.gunzipSync(buf);
+  if (isGz) {
+    try {
+      buf = zlib.gunzipSync(buf);
+    } catch {
+    }
+  }
   return buf.toString('utf8');
 }
 
@@ -5093,6 +5130,16 @@ export const runEpgSource = asyncHandler(async (req: Request, res: Response) => 
   const { id } = req.params;
   const existing = await prisma.coreEpgSource.findFirst({ where: { id, ...coreOwnerWhere(currentUser) } });
   if (!existing) throw new AppError(404, 'Fonte EPG não encontrada');
-  const result = await executeCoreEpgSource(id, 'manual');
-  res.json({ ok: true, result });
+  try {
+    const result = await runCoreEpgImport(id);
+    res.json({ ok: true, result });
+  } catch (error: any) {
+    await prisma.coreEpgSource
+      .update({
+        where: { id },
+        data: { lastStatus: 'error', lastMessage: error?.message || String(error), lastRunAt: new Date() },
+      })
+      .catch(() => {});
+    throw error instanceof AppError ? error : new AppError(500, error?.message || 'Erro ao executar fonte EPG');
+  }
 });
