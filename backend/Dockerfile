@@ -106,4 +106,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Comando de inicialização
 ENV PRISMA_SKIP_POSTINSTALL_GENERATE=1
-CMD ["sh", "-c", "i=0; until npx prisma db push --skip-generate; do i=$((i+1)); echo \"[startup] prisma db push falhou (tentativa ${i}/30)\"; if [ \"$i\" -ge 30 ]; then echo \"[startup] prisma db push falhou definitivamente\"; exit 1; fi; sleep 2; done; (npx tsx prisma/seed.ts || true); node --max-old-space-size=8192 dist/app.js"]
+CMD ["sh", "-c", "i=0; until npx prisma db push --skip-generate --accept-data-loss; do i=$((i+1)); echo \"[startup] prisma db push falhou (tentativa ${i}/30)\"; if [ \"$i\" -ge 30 ]; then echo \"[startup] prisma db push falhou definitivamente\"; exit 1; fi; sleep 2; done; (npx tsx prisma/seed.ts || true); node --max-old-space-size=8192 dist/app.js"]
