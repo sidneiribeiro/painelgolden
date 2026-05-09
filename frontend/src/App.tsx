@@ -16,13 +16,6 @@ import {
   BackupsPage,
   FinancialPage,
   ImportSigmaPage,
-  VODDashboardPage,
-  VODItemsPage,
-  VODImportPage,
-  VODImportV2Page,
-  VODSchedulePage,
-  LiveImportPage,
-  LiveStreamsPage,
   CoreXtreamPage,
   LandingPage,
   MarketingConfigPage,
@@ -34,7 +27,6 @@ import { PremiumSourcesPage } from './pages/premium/PremiumSourcesPage';
 import { PremiumPlansPage } from './pages/premium/PremiumPlansPage';
 import { PanelSettingsPage } from './pages/settings/PanelSettingsPage';
 import { TMDBKeysPage } from './pages/settings/TMDBKeysPage';
-import { ImportSourcesPage } from './pages/vod/ImportSourcesPage';
 import { useAuthStore } from './store/authStore';
 import BillingReportPage from "./pages/admin/BillingReport";
 import HierarchicalViewPage from "./pages/admin/HierarchicalView";
@@ -126,24 +118,9 @@ function App() {
                 <Route path="hierarchy" element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER']} menuKey="billing_hierarchy"><HierarchicalViewPage /></RoleProtectedRoute>} />
               </Route>
               <Route path="import-sigma" element={<ImportSigmaPage />} />
-              <Route path="vod">
-                <Route index element={<VODDashboardPage />} />
-                <Route path="movies" element={<VODItemsPage />} />
-                <Route path="series" element={<VODItemsPage />} />
-                <Route path="items" element={<VODItemsPage />} />
-                <Route path="import" element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN']}><VODImportPage /></RoleProtectedRoute>} />
-                <Route path="import-v2" element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN']}><VODImportV2Page /></RoleProtectedRoute>} />
-                <Route path="schedules" element={<VODSchedulePage />} />
-                <Route path="sources" element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN']} menuKey="vod"><ImportSourcesPage /></RoleProtectedRoute>} />
-              </Route>
-              <Route path="live">
-                <Route path="streams" element={<Navigate to="/livetv/streams" replace />} />
-                <Route path="import" element={<Navigate to="/livetv/import" replace />} />
-              </Route>
-              <Route path="livetv">
-                <Route path="streams" element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER']}><LiveStreamsPage /></RoleProtectedRoute>} />
-                <Route path="import" element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER']}><LiveImportPage /></RoleProtectedRoute>} />
-              </Route>
+              <Route path="vod/import" element={<Navigate to="/core?tab=overview&action=import-m3u" replace />} />
+              <Route path="vod/import-v2" element={<Navigate to="/core?tab=overview&action=import-m3u" replace />} />
+              <Route path="livetv/import" element={<Navigate to="/core?tab=overview&action=import-m3u" replace />} />
               <Route path="marketing">
                 <Route path="config" element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN']} menuKey="marketing"><MarketingConfigPage /></RoleProtectedRoute>} />
                 <Route path="banners" element={<RoleProtectedRoute allowedRoles={['SUPER_ADMIN', 'ADMIN']} menuKey="marketing"><MarketingBannersPage /></RoleProtectedRoute>} />

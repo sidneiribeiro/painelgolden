@@ -18,8 +18,6 @@ const pageTitles: Record<string, string> = {
   '/settings/access-groups': 'Grupos de Acesso',
   '/settings/panel': 'Configurações',
   '/settings/tmdb-keys': 'Chaves TMDB',
-  '/livetv/streams': 'Streams (Live)',
-  '/livetv/import': 'Importar Streams',
   '/core': 'Xtream Novo',
 };
 

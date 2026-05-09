@@ -110,8 +110,6 @@ const serverItems: NavItem[] = [
   { path: '/core?tab=servers', label: 'Servidores', icon: Icons.core, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
   { path: '/core?tab=schedules', label: 'Agendas', icon: Icons.settings, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
   { path: '/core?tab=epg', label: 'EPG', icon: Icons.live, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
-  { path: '/livetv/streams', label: 'Canais (Live)', icon: Icons.live, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
-  { path: '/livetv/import', label: 'Importar (Live)', icon: Icons.import, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'] },
   { path: '/core?tab=overview&action=import-m3u', label: 'Importar M3U', icon: Icons.import, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
 ];
 
