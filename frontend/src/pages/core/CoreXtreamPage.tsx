@@ -1111,47 +1111,12 @@ export function CoreXtreamPage() {
       tab: TabKey;
       kind: string;
       name: string;
+      imageUrl?: string | null;
       createdAt: string;
       ts: number;
       badge: { label: string; variant: 'success' | 'warning' | 'info' };
     }> = [];
 
-    for (const b of bouquets) {
-      const ts = new Date(b.createdAt).getTime();
-      items.push({
-        key: `bouquet:${b.id}`,
-        tab: 'bouquets',
-        kind: 'Categoria',
-        name: b.name,
-        createdAt: b.createdAt,
-        ts: Number.isFinite(ts) ? ts : 0,
-        badge: { label: b.isActive ? 'ATIVO' : 'INATIVO', variant: b.isActive ? 'success' : 'warning' },
-      });
-    }
-    for (const p of packages) {
-      const ts = new Date(p.createdAt).getTime();
-      items.push({
-        key: `package:${p.id}`,
-        tab: 'packages',
-        kind: 'Pacote',
-        name: p.name,
-        createdAt: p.createdAt,
-        ts: Number.isFinite(ts) ? ts : 0,
-        badge: { label: p.isActive ? 'ATIVO' : 'INATIVO', variant: p.isActive ? 'success' : 'warning' },
-      });
-    }
-    for (const l of lines) {
-      const ts = new Date(l.createdAt).getTime();
-      items.push({
-        key: `line:${l.id}`,
-        tab: 'lines',
-        kind: 'Linha',
-        name: l.username,
-        createdAt: l.createdAt,
-        ts: Number.isFinite(ts) ? ts : 0,
-        badge: { label: l.status === 'ACTIVE' ? 'ATIVA' : 'DESATIVADA', variant: l.status === 'ACTIVE' ? 'success' : 'warning' },
-      });
-    }
     for (const s of streams) {
       const ts = new Date(s.createdAt).getTime();
       items.push({
@@ -1159,6 +1124,7 @@ export function CoreXtreamPage() {
         tab: 'streams',
         kind: 'Stream',
         name: s.name,
+        imageUrl: s.logoUrl || null,
         createdAt: s.createdAt,
         ts: Number.isFinite(ts) ? ts : 0,
         badge: { label: s.isActive ? 'ATIVO' : 'INATIVO', variant: s.isActive ? 'success' : 'warning' },
@@ -1171,6 +1137,7 @@ export function CoreXtreamPage() {
         tab: 'vod',
         kind: 'VOD',
         name: v.name,
+        imageUrl: v.posterUrl || null,
         createdAt: v.createdAt,
         ts: Number.isFinite(ts) ? ts : 0,
         badge: { label: v.isActive ? 'ATIVO' : 'INATIVO', variant: v.isActive ? 'success' : 'warning' },
@@ -1183,6 +1150,7 @@ export function CoreXtreamPage() {
         tab: 'series',
         kind: 'Série',
         name: s.name,
+        imageUrl: s.coverUrl || null,
         createdAt: s.createdAt,
         ts: Number.isFinite(ts) ? ts : 0,
         badge: { label: s.isActive ? 'ATIVA' : 'INATIVA', variant: s.isActive ? 'success' : 'warning' },
@@ -1191,7 +1159,7 @@ export function CoreXtreamPage() {
 
     items.sort((a, b) => b.ts - a.ts);
     return items.slice(0, 25);
-  }, [bouquets, packages, lines, streams, vodItems, series]);
+  }, [streams, vodItems, series]);
 
   useEffect(() => {
     if (tab !== 'payments') setSelectedPaymentIds([]);
@@ -3190,25 +3158,6 @@ export function CoreXtreamPage() {
                 <div className="text-xs text-zinc-600 dark:text-zinc-400">EPISÓDIOS</div>
                 <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{overviewCounts.totalEpisodes}</div>
               </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
-                <div className="text-xs text-zinc-600 dark:text-zinc-400">CATEGORIAS</div>
-                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{bouquets.length}</div>
-                <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Ativas: {overviewCounts.activeBouquets}</div>
-              </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
-                <div className="text-xs text-zinc-600 dark:text-zinc-400">PACOTES</div>
-                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{packages.length}</div>
-                <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Ativos: {overviewCounts.activePackages}</div>
-              </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
-                <div className="text-xs text-zinc-600 dark:text-zinc-400">LINHAS</div>
-                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{lines.length}</div>
-                <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Ativas: {overviewCounts.activeLines}</div>
-              </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
-                <div className="text-xs text-zinc-600 dark:text-zinc-400">SERVIDORES ATIVOS</div>
-                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{activeServersCount}</div>
-              </div>
             </div>
           </Card>
 
@@ -3222,6 +3171,7 @@ export function CoreXtreamPage() {
                 <thead>
                   <tr className="text-left text-zinc-600 dark:text-zinc-400">
                     <th className="py-2 pr-4">Tipo</th>
+                    <th className="py-2 pr-4">Capa/Logo</th>
                     <th className="py-2 pr-4">Nome</th>
                     <th className="py-2 pr-4">Status</th>
                     <th className="py-2 pr-4">Criado em</th>
@@ -3232,6 +3182,20 @@ export function CoreXtreamPage() {
                   {overviewRecent.map((it) => (
                     <tr key={it.key} className="border-t border-zinc-200/70 dark:border-zinc-800/70">
                       <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">{it.kind}</td>
+                      <td className="py-3 pr-4">
+                        {it.imageUrl ? (
+                          <img
+                            src={getImageUrl(it.imageUrl) || ''}
+                            alt=""
+                            className="w-8 h-8 rounded object-cover bg-white"
+                            onError={(e) => {
+                              (e.currentTarget as any).style.display = 'none';
+                            }}
+                          />
+                        ) : (
+                          <div className="w-8 h-8 rounded bg-zinc-100 dark:bg-zinc-800" />
+                        )}
+                      </td>
                       <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-white">{it.name}</td>
                       <td className="py-3 pr-4">
                         <Badge variant={it.badge.variant}>{it.badge.label}</Badge>
@@ -3248,7 +3212,7 @@ export function CoreXtreamPage() {
                   ))}
                   {overviewRecent.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
+                      <td colSpan={6} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
                         Nenhum conteúdo encontrado
                       </td>
                     </tr>
@@ -4491,6 +4455,7 @@ export function CoreXtreamPage() {
                 <tr className="text-left text-zinc-600 dark:text-zinc-400">
                   <th className="py-2 pr-4">Nome</th>
                   <th className="py-2 pr-4">Status</th>
+                  <th className="py-2 pr-4">Capa</th>
                   <th className="py-2 pr-4">URL</th>
                   <th className="py-2 pr-4">Categorias</th>
                   <th className="py-2 pr-4"></th>
@@ -4502,6 +4467,20 @@ export function CoreXtreamPage() {
                     <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-white">{v.name}</td>
                     <td className="py-3 pr-4">
                       <Badge variant={v.isActive ? 'success' : 'warning'}>{v.isActive ? 'ATIVO' : 'INATIVO'}</Badge>
+                    </td>
+                    <td className="py-3 pr-4">
+                      {v.posterUrl ? (
+                        <img
+                          src={getImageUrl(v.posterUrl) || ''}
+                          alt=""
+                          className="w-8 h-8 rounded object-cover bg-white"
+                          onError={(e) => {
+                            (e.currentTarget as any).style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded bg-zinc-100 dark:bg-zinc-800" />
+                      )}
                     </td>
                     <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300 truncate max-w-[380px]">{v.streamUrl}</td>
                     <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">
@@ -4527,7 +4506,7 @@ export function CoreXtreamPage() {
                 ))}
                 {vodItems.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
+                    <td colSpan={6} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
                       Nenhum VOD criado ainda
                     </td>
                   </tr>
@@ -4550,6 +4529,7 @@ export function CoreXtreamPage() {
                 <tr className="text-left text-zinc-600 dark:text-zinc-400">
                   <th className="py-2 pr-4">Nome</th>
                   <th className="py-2 pr-4">Status</th>
+                  <th className="py-2 pr-4">Capa</th>
                   <th className="py-2 pr-4">Episódios</th>
                   <th className="py-2 pr-4">Categorias</th>
                   <th className="py-2 pr-4"></th>
@@ -4561,6 +4541,20 @@ export function CoreXtreamPage() {
                     <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-white">{s.name}</td>
                     <td className="py-3 pr-4">
                       <Badge variant={s.isActive ? 'success' : 'warning'}>{s.isActive ? 'ATIVO' : 'INATIVO'}</Badge>
+                    </td>
+                    <td className="py-3 pr-4">
+                      {s.coverUrl ? (
+                        <img
+                          src={getImageUrl(s.coverUrl) || ''}
+                          alt=""
+                          className="w-8 h-8 rounded object-cover bg-white"
+                          onError={(e) => {
+                            (e.currentTarget as any).style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded bg-zinc-100 dark:bg-zinc-800" />
+                      )}
                     </td>
                     <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">{s._count?.episodes ?? '-'}</td>
                     <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">
@@ -4587,7 +4581,7 @@ export function CoreXtreamPage() {
                 ))}
                 {series.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
+                    <td colSpan={6} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
                       Nenhuma série criada ainda
                     </td>
                   </tr>
