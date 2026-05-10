@@ -1,13 +1,17 @@
 import { Router } from 'express';
 import { authMiddleware, requireRole } from '../middleware/auth.middleware.js';
 import { billingMiddleware, requireBillingValid } from '../middleware/billingMiddleware.js';
+import { upload } from '../middleware/upload.js';
 import {
   listStreams,
   probeStreamUpstreams,
   bulkApplyEdgeServersToStreams,
+  bulkUpdateCoreStreams,
+  bulkDeleteCoreStreams,
   listEdgeServers,
   getEdgeServersStatus,
   getEdgeServersMetrics,
+  getMainMetrics,
   createEdgeServer,
   updateEdgeServer,
   deleteEdgeServer,
@@ -17,11 +21,14 @@ import {
   cancelEdgeServerJob,
   createStream,
   updateStream,
+  uploadStreamLogo,
   removeStream,
   listBouquets,
   createBouquet,
   updateBouquet,
   removeBouquet,
+  moveBouquet,
+  resetCoreAll,
   listPackages,
   createPackage,
   updatePackage,
@@ -47,16 +54,23 @@ import {
   listVod,
   createVod,
   updateVod,
+  uploadVodPoster,
   removeVod,
+  bulkUpdateCoreVod,
+  bulkDeleteCoreVod,
   listSeries,
   createSeries,
   updateSeries,
+  uploadSeriesCover,
   removeSeries,
+  bulkUpdateCoreSeries,
+  bulkDeleteCoreSeries,
   listSeriesEpisodes,
   createSeriesEpisode,
   updateSeriesEpisode,
   removeSeriesEpisode,
   importM3U,
+  previewM3U,
   getM3UImportJob,
   listM3USchedules,
   createM3USchedule,
@@ -81,33 +95,41 @@ router.use(authMiddleware);
 router.use(billingMiddleware);
 router.use(requireRole('SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'));
 
+const coreAdminOnly = requireRole('SUPER_ADMIN', 'ADMIN');
+
 router.get('/streams', listStreams);
 router.get('/streams/:id/probe', requireBillingValid, probeStreamUpstreams);
-router.post('/streams/bulk/apply-servers', requireBillingValid, bulkApplyEdgeServersToStreams);
-router.post('/streams', requireBillingValid, createStream);
-router.put('/streams/:id', requireBillingValid, updateStream);
-router.delete('/streams/:id', requireBillingValid, removeStream);
+router.post('/streams/bulk/apply-servers', coreAdminOnly, requireBillingValid, bulkApplyEdgeServersToStreams);
+router.put('/streams/bulk', coreAdminOnly, requireBillingValid, bulkUpdateCoreStreams);
+router.delete('/streams/bulk', coreAdminOnly, requireBillingValid, bulkDeleteCoreStreams);
+router.post('/streams', coreAdminOnly, requireBillingValid, createStream);
+router.put('/streams/:id', coreAdminOnly, requireBillingValid, updateStream);
+router.post('/streams/:id/logo', coreAdminOnly, requireBillingValid, upload.single('logo'), uploadStreamLogo);
+router.delete('/streams/:id', coreAdminOnly, requireBillingValid, removeStream);
 
 router.get('/servers', listEdgeServers);
 router.get('/servers/status', requireBillingValid, getEdgeServersStatus);
 router.get('/servers/metrics', requireBillingValid, getEdgeServersMetrics);
-router.post('/servers', requireBillingValid, createEdgeServer);
-router.put('/servers/:id', requireBillingValid, updateEdgeServer);
-router.delete('/servers/:id', requireBillingValid, deleteEdgeServer);
+router.get('/monitor/metrics', requireBillingValid, getMainMetrics);
+router.post('/servers', coreAdminOnly, requireBillingValid, createEdgeServer);
+router.put('/servers/:id', coreAdminOnly, requireBillingValid, updateEdgeServer);
+router.delete('/servers/:id', coreAdminOnly, requireBillingValid, deleteEdgeServer);
 router.get('/servers/jobs/:jobId', requireRole('SUPER_ADMIN', 'ADMIN'), getEdgeServerJob);
 router.post('/servers/jobs/:jobId/cancel', requireRole('SUPER_ADMIN', 'ADMIN'), cancelEdgeServerJob);
 router.post('/servers/:id/ssh/test', requireRole('SUPER_ADMIN', 'ADMIN'), requireBillingValid, startEdgeServerSshTestJob);
 router.post('/servers/:id/install', requireRole('SUPER_ADMIN', 'ADMIN'), requireBillingValid, startEdgeServerInstallNginxHealthJob);
 
 router.get('/bouquets', listBouquets);
-router.post('/bouquets', requireBillingValid, createBouquet);
-router.put('/bouquets/:id', requireBillingValid, updateBouquet);
-router.delete('/bouquets/:id', requireBillingValid, removeBouquet);
+router.post('/bouquets', coreAdminOnly, requireBillingValid, createBouquet);
+router.put('/bouquets/:id', coreAdminOnly, requireBillingValid, updateBouquet);
+router.post('/bouquets/:id/move', coreAdminOnly, requireBillingValid, moveBouquet);
+router.delete('/bouquets/:id', coreAdminOnly, requireBillingValid, removeBouquet);
+router.post('/reset', requireRole('SUPER_ADMIN', 'ADMIN'), requireBillingValid, resetCoreAll);
 
 router.get('/packages', listPackages);
-router.post('/packages', requireBillingValid, createPackage);
-router.put('/packages/:id', requireBillingValid, updatePackage);
-router.delete('/packages/:id', requireBillingValid, removePackage);
+router.post('/packages', coreAdminOnly, requireBillingValid, createPackage);
+router.put('/packages/:id', coreAdminOnly, requireBillingValid, updatePackage);
+router.delete('/packages/:id', coreAdminOnly, requireBillingValid, removePackage);
 
 router.get('/lines', listLines);
 router.post('/lines', requireBillingValid, createLine);
@@ -130,32 +152,39 @@ router.post('/payments/:id/send-confirmed-whatsapp', requireBillingValid, sendCo
 router.post('/payments/:id/recreate-pix', requireBillingValid, recreateCorePaymentPix);
 
 router.get('/vod', listVod);
-router.post('/vod', requireBillingValid, createVod);
-router.put('/vod/:id', requireBillingValid, updateVod);
-router.delete('/vod/:id', requireBillingValid, removeVod);
+router.put('/vod/bulk', coreAdminOnly, requireBillingValid, bulkUpdateCoreVod);
+router.delete('/vod/bulk', coreAdminOnly, requireBillingValid, bulkDeleteCoreVod);
+router.post('/vod', coreAdminOnly, requireBillingValid, createVod);
+router.put('/vod/:id', coreAdminOnly, requireBillingValid, updateVod);
+router.post('/vod/:id/poster', coreAdminOnly, requireBillingValid, upload.single('poster'), uploadVodPoster);
+router.delete('/vod/:id', coreAdminOnly, requireBillingValid, removeVod);
 
 router.get('/series', listSeries);
-router.post('/series', requireBillingValid, createSeries);
-router.put('/series/:id', requireBillingValid, updateSeries);
-router.delete('/series/:id', requireBillingValid, removeSeries);
+router.put('/series/bulk', coreAdminOnly, requireBillingValid, bulkUpdateCoreSeries);
+router.delete('/series/bulk', coreAdminOnly, requireBillingValid, bulkDeleteCoreSeries);
+router.post('/series', coreAdminOnly, requireBillingValid, createSeries);
+router.put('/series/:id', coreAdminOnly, requireBillingValid, updateSeries);
+router.post('/series/:id/cover', coreAdminOnly, requireBillingValid, upload.single('cover'), uploadSeriesCover);
+router.delete('/series/:id', coreAdminOnly, requireBillingValid, removeSeries);
 
 router.get('/series/:seriesId/episodes', listSeriesEpisodes);
-router.post('/series/:seriesId/episodes', requireBillingValid, createSeriesEpisode);
-router.put('/series/episodes/:id', requireBillingValid, updateSeriesEpisode);
-router.delete('/series/episodes/:id', requireBillingValid, removeSeriesEpisode);
+router.post('/series/:seriesId/episodes', coreAdminOnly, requireBillingValid, createSeriesEpisode);
+router.put('/series/episodes/:id', coreAdminOnly, requireBillingValid, updateSeriesEpisode);
+router.delete('/series/episodes/:id', coreAdminOnly, requireBillingValid, removeSeriesEpisode);
 
-router.post('/import/m3u', requireBillingValid, importM3U);
-router.get('/import/m3u/jobs/:jobId', requireBillingValid, getM3UImportJob);
+router.post('/import/m3u', coreAdminOnly, requireBillingValid, importM3U);
+router.post('/import/m3u/preview', coreAdminOnly, requireBillingValid, previewM3U);
+router.get('/import/m3u/jobs/:jobId', coreAdminOnly, requireBillingValid, getM3UImportJob);
 
 router.get('/schedules', listM3USchedules);
-router.post('/schedules', requireBillingValid, createM3USchedule);
-router.put('/schedules/:id', requireBillingValid, updateM3USchedule);
-router.delete('/schedules/:id', requireBillingValid, deleteM3USchedule);
-router.post('/schedules/:id/run', requireBillingValid, runM3USchedule);
-router.post('/schedules/m3u', requireBillingValid, createM3USchedule);
-router.put('/schedules/m3u/:id', requireBillingValid, updateM3USchedule);
-router.delete('/schedules/m3u/:id', requireBillingValid, deleteM3USchedule);
-router.post('/schedules/m3u/:id/run', requireBillingValid, runM3USchedule);
+router.post('/schedules', coreAdminOnly, requireBillingValid, createM3USchedule);
+router.put('/schedules/:id', coreAdminOnly, requireBillingValid, updateM3USchedule);
+router.delete('/schedules/:id', coreAdminOnly, requireBillingValid, deleteM3USchedule);
+router.post('/schedules/:id/run', coreAdminOnly, requireBillingValid, runM3USchedule);
+router.post('/schedules/m3u', coreAdminOnly, requireBillingValid, createM3USchedule);
+router.put('/schedules/m3u/:id', coreAdminOnly, requireBillingValid, updateM3USchedule);
+router.delete('/schedules/m3u/:id', coreAdminOnly, requireBillingValid, deleteM3USchedule);
+router.post('/schedules/m3u/:id/run', coreAdminOnly, requireBillingValid, runM3USchedule);
 
 router.get('/playback/sessions', listPlaybackSessions);
 router.post('/playback/sessions/:id/terminate', requireBillingValid, terminatePlaybackSession);
@@ -163,10 +192,10 @@ router.post('/playback/lines/:lineId/terminate', requireBillingValid, terminateL
 
 router.get('/epg/sources', listEpgSources);
 router.get('/epg/channels', listEpgChannels);
-router.post('/epg/auto-map', requireBillingValid, autoMapEpgToStreams);
-router.post('/epg/sources', requireBillingValid, createEpgSource);
-router.put('/epg/sources/:id', requireBillingValid, updateEpgSource);
-router.delete('/epg/sources/:id', requireBillingValid, deleteEpgSource);
-router.post('/epg/sources/:id/run', requireBillingValid, runEpgSource);
+router.post('/epg/auto-map', coreAdminOnly, requireBillingValid, autoMapEpgToStreams);
+router.post('/epg/sources', coreAdminOnly, requireBillingValid, createEpgSource);
+router.put('/epg/sources/:id', coreAdminOnly, requireBillingValid, updateEpgSource);
+router.delete('/epg/sources/:id', coreAdminOnly, requireBillingValid, deleteEpgSource);
+router.post('/epg/sources/:id/run', coreAdminOnly, requireBillingValid, runEpgSource);
 
 export default router;

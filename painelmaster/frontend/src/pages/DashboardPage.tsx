@@ -55,9 +55,10 @@ interface DashboardData {
 
 type CoreBouquet = {
   id: string;
+  kind: 'LIVE' | 'MOVIE' | 'SERIES';
   name: string;
   isActive: boolean;
-  _count?: { streams: number };
+  _count?: { streams?: number; vodItems?: number; series?: number };
 };
 
 type CoreEdgeServersMetricsResponse = {
@@ -415,7 +416,8 @@ export function DashboardPage() {
       )}
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="p-5">
+        <Card className="p-5 relative overflow-hidden">
+          <div className="h-1 w-full bg-gradient-to-r from-cyan-500 to-blue-600 rounded-full mb-4 opacity-80" />
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white flex items-center gap-2">
               <LayoutDashboard className="w-5 h-5 text-cyan-400" />
@@ -454,7 +456,8 @@ export function DashboardPage() {
           )}
         </Card>
 
-        <Card className="p-5">
+        <Card className="p-5 relative overflow-hidden">
+          <div className="h-1 w-full bg-gradient-to-r from-cyan-500 to-violet-600 rounded-full mb-4 opacity-80" />
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white flex items-center gap-2">
               <Server className="w-5 h-5 text-blue-400" />
@@ -485,7 +488,8 @@ export function DashboardPage() {
           )}
         </Card>
 
-        <Card className="p-5">
+        <Card className="p-5 relative overflow-hidden">
+          <div className="h-1 w-full bg-gradient-to-r from-emerald-500 to-cyan-600 rounded-full mb-4 opacity-80" />
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white flex items-center gap-2">
               <Activity className="w-5 h-5 text-emerald-400" />

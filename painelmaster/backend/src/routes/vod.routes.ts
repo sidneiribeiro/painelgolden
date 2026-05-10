@@ -13,6 +13,10 @@ router.use(authMiddleware);
 // Listar itens VOD
 router.get('/items', requireRole('SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'), vodController.getVODItems);
 
+// Gestão em massa (VOD)
+router.put('/items/bulk', requireRole('SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'), vodController.bulkUpdateVODItems);
+router.delete('/items/bulk', requireRole('SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'), vodController.bulkDeleteVODItems);
+
 // Listar filmes (alias para /items com vodType=movie)
 router.get('/movies', requireRole('SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'), (req, res, next) => {
   // Adicionar vodType=movie aos query params
@@ -70,4 +74,3 @@ router.delete('/schedules/:id', requireRole('SUPER_ADMIN'), vodScheduleControlle
 router.post('/schedules/:id/run', requireRole('SUPER_ADMIN'), vodScheduleController.runSchedule);
 
 export default router;
-

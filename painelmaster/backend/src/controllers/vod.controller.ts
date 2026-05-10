@@ -227,6 +227,217 @@ export const getVODItems = asyncHandler(async (req: Request, res: Response) => {
   }
 });
 
+async function detectStreamsUpdatedColumn(connection: any): Promise<boolean> {
+  try {
+    const [rows] = await connection.query(`SHOW COLUMNS FROM streams LIKE 'updated'`);
+    return (rows as any[]).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+async function tableExists(connection: any, name: string): Promise<boolean> {
+  try {
+    const [rows] = await connection.query(`SHOW TABLES LIKE ?`, [name]);
+    return (rows as any[]).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * PUT /api/vod/items/bulk
+ * Editar em massa filmes ou séries no XUI (via MySQL)
+ */
+export const bulkUpdateVODItems = asyncHandler(async (req: Request, res: Response) => {
+  const serverId = (req.body?.serverId || req.query?.serverId) as string | undefined;
+  const vodType = (req.body?.vodType || req.query?.vodType) as string | undefined;
+  const idsRaw = (req.body?.ids || req.body?.itemIds) as any[] | undefined;
+  const categoryIdRaw = req.body?.categoryId;
+  const coverRaw = req.body?.cover;
+
+  if (!serverId) throw new AppError(400, 'serverId é obrigatório');
+  if (vodType !== 'movie' && vodType !== 'series') throw new AppError(400, 'vodType deve ser movie ou series');
+
+  const ids = Array.isArray(idsRaw)
+    ? idsRaw.map((v: any) => parseInt(String(v), 10)).filter((n: number) => Number.isFinite(n) && n > 0)
+    : [];
+
+  if (ids.length === 0) throw new AppError(400, 'ids é obrigatório');
+  if (ids.length > 500) throw new AppError(400, 'Limite máximo: 500 itens por operação');
+
+  const server = await prisma.xuiServer.findUnique({ where: { id: String(serverId) } });
+  if (!server) throw new AppError(404, 'Servidor XUI não encontrado');
+
+  const client = new XUIVodDBClient(server);
+  const connection = await client.connect();
+  if (!connection) throw new AppError(500, 'Falha ao conectar ao banco de dados');
+
+  const categoryIdNum = categoryIdRaw !== undefined && categoryIdRaw !== null && String(categoryIdRaw).trim() !== ''
+    ? parseInt(String(categoryIdRaw), 10)
+    : undefined;
+  const cover = coverRaw !== undefined && coverRaw !== null ? String(coverRaw).trim() : undefined;
+
+  try {
+    const placeholders = ids.map(() => '?').join(',');
+    const nowUnix = Math.floor(Date.now() / 1000);
+
+    if (vodType === 'movie') {
+      const hasUpdated = await detectStreamsUpdatedColumn(connection);
+      const sets: string[] = [];
+      const params: any[] = [];
+
+      if (categoryIdNum !== undefined && Number.isFinite(categoryIdNum)) {
+        sets.push('category_id = ?');
+        params.push(categoryIdNum);
+      }
+      if (cover !== undefined) {
+        sets.push('stream_icon = ?');
+        params.push(cover);
+      }
+      if (hasUpdated && sets.length > 0) sets.push('updated = NOW()');
+
+      if (sets.length === 0) {
+        return res.json({ success: true, affectedRows: 0 });
+      }
+
+      const [result] = await connection.query<any>(
+        `UPDATE streams SET ${sets.join(', ')} WHERE type = 2 AND id IN (${placeholders})`,
+        [...params, ...ids]
+      );
+      return res.json({ success: true, affectedRows: (result as any)?.affectedRows || 0 });
+    }
+
+    const hasSeries = await tableExists(connection, 'series');
+    const hasStreamsSeries = !hasSeries && await tableExists(connection, 'streams_series');
+
+    if (hasSeries || hasStreamsSeries) {
+      const tableName = hasSeries ? 'series' : 'streams_series';
+      const sets: string[] = [];
+      const params: any[] = [];
+
+      if (categoryIdNum !== undefined && Number.isFinite(categoryIdNum)) {
+        sets.push('category_id = ?');
+        params.push(`[${categoryIdNum}]`);
+      }
+      if (cover !== undefined) {
+        sets.push('cover = ?');
+        params.push(cover);
+        sets.push('cover_big = ?');
+        params.push(cover);
+      }
+
+      if (sets.length === 0) {
+        return res.json({ success: true, affectedRows: 0 });
+      }
+
+      if (hasSeries) {
+        sets.push('last_modified = ?');
+        params.push(nowUnix);
+      }
+
+      const [result] = await connection.query<any>(
+        `UPDATE ${tableName} SET ${sets.join(', ')} WHERE id IN (${placeholders})`,
+        [...params, ...ids]
+      );
+      return res.json({ success: true, affectedRows: (result as any)?.affectedRows || 0 });
+    }
+
+    const hasUpdated = await detectStreamsUpdatedColumn(connection);
+    const sets: string[] = [];
+    const params: any[] = [];
+    if (categoryIdNum !== undefined && Number.isFinite(categoryIdNum)) {
+      sets.push('category_id = ?');
+      params.push(categoryIdNum);
+    }
+    if (cover !== undefined) {
+      sets.push('stream_icon = ?');
+      params.push(cover);
+    }
+    if (hasUpdated && sets.length > 0) sets.push('updated = NOW()');
+    if (sets.length === 0) {
+      return res.json({ success: true, affectedRows: 0 });
+    }
+    const [result] = await connection.query<any>(
+      `UPDATE streams SET ${sets.join(', ')} WHERE type = 3 AND id IN (${placeholders})`,
+      [...params, ...ids]
+    );
+    return res.json({ success: true, affectedRows: (result as any)?.affectedRows || 0 });
+  } finally {
+    await client.disconnect();
+  }
+});
+
+/**
+ * DELETE /api/vod/items/bulk
+ * Apagar em massa filmes ou séries no XUI (via MySQL)
+ */
+export const bulkDeleteVODItems = asyncHandler(async (req: Request, res: Response) => {
+  const serverId = (req.body?.serverId || req.query?.serverId) as string | undefined;
+  const vodType = (req.body?.vodType || req.query?.vodType) as string | undefined;
+  const idsRaw = (req.body?.ids || req.body?.itemIds) as any[] | undefined;
+
+  if (!serverId) throw new AppError(400, 'serverId é obrigatório');
+  if (vodType !== 'movie' && vodType !== 'series') throw new AppError(400, 'vodType deve ser movie ou series');
+
+  const ids = Array.isArray(idsRaw)
+    ? idsRaw.map((v: any) => parseInt(String(v), 10)).filter((n: number) => Number.isFinite(n) && n > 0)
+    : [];
+
+  if (ids.length === 0) throw new AppError(400, 'ids é obrigatório');
+  if (ids.length > 500) throw new AppError(400, 'Limite máximo: 500 itens por operação');
+
+  const server = await prisma.xuiServer.findUnique({ where: { id: String(serverId) } });
+  if (!server) throw new AppError(404, 'Servidor XUI não encontrado');
+
+  const client = new XUIVodDBClient(server);
+  const connection = await client.connect();
+  if (!connection) throw new AppError(500, 'Falha ao conectar ao banco de dados');
+
+  try {
+    await connection.beginTransaction();
+    const placeholders = ids.map(() => '?').join(',');
+
+    if (vodType === 'movie') {
+      if (await tableExists(connection, 'movie_properties')) {
+        try {
+          await connection.query(`DELETE FROM movie_properties WHERE stream_id IN (${placeholders})`, ids);
+        } catch {}
+      }
+      const [result] = await connection.query<any>(`DELETE FROM streams WHERE type = 2 AND id IN (${placeholders})`, ids);
+      await connection.commit();
+      return res.json({ success: true, deleted: (result as any)?.affectedRows || 0 });
+    }
+
+    if (await tableExists(connection, 'series_episodes')) {
+      try {
+        await connection.query(`DELETE FROM series_episodes WHERE series_id IN (${placeholders})`, ids);
+      } catch {}
+    }
+    try {
+      await connection.query(`DELETE FROM streams WHERE type = 5 AND series_no IN (${placeholders})`, ids);
+    } catch {}
+
+    const hasSeries = await tableExists(connection, 'series');
+    const hasStreamsSeries = !hasSeries && await tableExists(connection, 'streams_series');
+    if (hasSeries || hasStreamsSeries) {
+      const tableName = hasSeries ? 'series' : 'streams_series';
+      const [result] = await connection.query<any>(`DELETE FROM ${tableName} WHERE id IN (${placeholders})`, ids);
+      await connection.commit();
+      return res.json({ success: true, deleted: (result as any)?.affectedRows || 0 });
+    }
+
+    const [result] = await connection.query<any>(`DELETE FROM streams WHERE type = 3 AND id IN (${placeholders})`, ids);
+    await connection.commit();
+    return res.json({ success: true, deleted: (result as any)?.affectedRows || 0 });
+  } catch (e: any) {
+    try { await connection.rollback(); } catch {}
+    throw e;
+  } finally {
+    await client.disconnect();
+  }
+});
+
 /**
  * GET /api/vod/stats
  * Estatísticas de VOD - Consulta direta no XUI (rápido, sempre atualizado)

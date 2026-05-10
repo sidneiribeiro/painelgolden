@@ -755,7 +755,7 @@ export const getM3U = asyncHandler(async (req: Request, res: Response) => {
 
   for (const it of vodItems) {
     const title = safe(it.vodItem.name);
-    const group = safe(it.bouquet.name);
+    const group = safe(`FILMES | ${it.bouquet.name}`);
     const logo = it.vodItem.posterUrl ? safe(it.vodItem.posterUrl) : '';
     const url = buildMovieUrl(baseUrl, xcPrefix, username, password, it.vodItem.publicId, 'mp4');
     if (!url) continue;
@@ -763,7 +763,7 @@ export const getM3U = asyncHandler(async (req: Request, res: Response) => {
   }
 
   for (const link of seriesLinks) {
-    const group = safe(link.bouquet.name);
+    const group = safe(`SÉRIES | ${link.bouquet.name}`);
     const seriesName = safe(link.series.name);
     const logo = link.series.coverUrl ? safe(link.series.coverUrl) : '';
     const eps = episodesBySeriesId.get(link.series.id) || [];
@@ -827,7 +827,7 @@ export const getPlayerApi = asyncHandler(async (req: Request, res: Response) => 
   const allowedBouquets = await prisma.corePackageBouquet.findMany({
     where: { packageId: line.packageId },
     include: {
-      bouquet: { select: { id: true, publicId: true, name: true, isActive: true } },
+      bouquet: { select: { id: true, publicId: true, name: true, isActive: true, kind: true, sortOrder: true } },
     },
   });
 
@@ -846,32 +846,80 @@ export const getPlayerApi = asyncHandler(async (req: Request, res: Response) => 
   };
 
   if (action === 'get_live_categories') {
+    const allowedIds = activeBouquets.map(b => b.id);
+    if (!allowedIds.length) return res.json([]);
+
+    const rows = await prisma.coreBouquetStream.findMany({
+      where: {
+        bouquetId: { in: allowedIds },
+        bouquet: { isActive: true },
+        stream: { isActive: true },
+      },
+      select: { bouquetId: true },
+      distinct: ['bouquetId'],
+    });
+    const used = new Set(rows.map(r => r.bouquetId));
     return res.json(
-      activeBouquets.map((b) => ({
-        category_id: String(b.publicId),
-        category_name: b.name,
-        parent_id: 0,
-      }))
+      activeBouquets
+        .filter(b => used.has(b.id))
+        .sort((a: any, b: any) => (a.sortOrder || 0) - (b.sortOrder || 0) || String(a.name).localeCompare(String(b.name)))
+        .map((b) => ({
+          category_id: String(b.publicId),
+          category_name: b.name,
+          parent_id: 0,
+        }))
     );
   }
 
   if (action === 'get_vod_categories') {
+    const allowedIds = activeBouquets.map(b => b.id);
+    if (!allowedIds.length) return res.json([]);
+
+    const rows = await prisma.coreBouquetVodItem.findMany({
+      where: {
+        bouquetId: { in: allowedIds },
+        bouquet: { isActive: true },
+        vodItem: { isActive: true },
+      },
+      select: { bouquetId: true },
+      distinct: ['bouquetId'],
+    });
+    const used = new Set(rows.map(r => r.bouquetId));
     return res.json(
-      activeBouquets.map((b) => ({
-        category_id: String(b.publicId),
-        category_name: b.name,
-        parent_id: 0,
-      }))
+      activeBouquets
+        .filter(b => used.has(b.id))
+        .sort((a: any, b: any) => (a.sortOrder || 0) - (b.sortOrder || 0) || String(a.name).localeCompare(String(b.name)))
+        .map((b) => ({
+          category_id: String(b.publicId),
+          category_name: b.name,
+          parent_id: 0,
+        }))
     );
   }
 
   if (action === 'get_series_categories') {
+    const allowedIds = activeBouquets.map(b => b.id);
+    if (!allowedIds.length) return res.json([]);
+
+    const rows = await prisma.coreBouquetSeries.findMany({
+      where: {
+        bouquetId: { in: allowedIds },
+        bouquet: { isActive: true },
+        series: { isActive: true },
+      },
+      select: { bouquetId: true },
+      distinct: ['bouquetId'],
+    });
+    const used = new Set(rows.map(r => r.bouquetId));
     return res.json(
-      activeBouquets.map((b) => ({
-        category_id: String(b.publicId),
-        category_name: b.name,
-        parent_id: 0,
-      }))
+      activeBouquets
+        .filter(b => used.has(b.id))
+        .sort((a: any, b: any) => (a.sortOrder || 0) - (b.sortOrder || 0) || String(a.name).localeCompare(String(b.name)))
+        .map((b) => ({
+          category_id: String(b.publicId),
+          category_name: b.name,
+          parent_id: 0,
+        }))
     );
   }
 

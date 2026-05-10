@@ -956,12 +956,20 @@ model CoreStreamEdgeServer {
   @@map("core_stream_edge_server")
 }
 
+enum CoreBouquetKind {
+  LIVE
+  MOVIE
+  SERIES
+}
+
 model CoreBouquet {
   id        String   @id @default(uuid())
   publicId  Int      @unique @default(autoincrement())
   ownerId   String
+  kind      CoreBouquetKind @default(LIVE)
   name      String
   isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -971,9 +979,10 @@ model CoreBouquet {
   series    CoreBouquetSeries[]
   packages  CorePackageBouquet[]
 
-  @@unique([ownerId, name])
+  @@unique([ownerId, kind, name])
   @@index([ownerId])
   @@index([isActive])
+  @@index([ownerId, kind, sortOrder])
   @@map("core_bouquet")
 }
 

@@ -166,6 +166,8 @@ export function BouquetsPage() {
         </div>
       </div>
 
+      <div className="h-1 w-full bg-gradient-to-r from-sky-500 to-cyan-600 rounded-full opacity-80" />
+
       {/* Alerta informativo */}
       <div className="bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/30 rounded-lg p-4 flex items-start gap-3">
         <span className="text-blue-600 dark:text-blue-400 text-xl">ℹ️</span>
@@ -193,7 +195,8 @@ export function BouquetsPage() {
         </Select>
       </div>
 
-      <Card className="p-5">
+      <Card className="p-5 relative overflow-hidden">
+        <div className="h-1 w-full bg-gradient-to-r from-sky-500 to-cyan-600 rounded-full mb-4 opacity-80" />
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
             <h2 className="text-lg font-semibold text-zinc-900 dark:text-white">🧩 Ordenar itens do Bouquet</h2>
@@ -342,8 +345,9 @@ export function BouquetsPage() {
               {bouquets.map((bouquet) => (
                 <Card
                   key={bouquet.id}
-                  className="p-4 hover:bg-zinc-100 dark:hover:bg-zinc-800/50 transition-colors"
+                  className="p-4 relative overflow-hidden hover:bg-zinc-100 dark:hover:bg-zinc-800/50 transition-colors"
                 >
+                  <div className="h-1 w-full bg-gradient-to-r from-sky-500 to-cyan-600 rounded-full mb-3 opacity-80" />
                   <div className="flex items-center justify-between">
                     <div>
                       <h3 className="text-zinc-900 dark:text-white font-medium">{bouquet.name}</h3>
@@ -361,7 +365,8 @@ export function BouquetsPage() {
           </div>
         ))
       ) : (
-        <Card className="p-8 text-center">
+        <Card className="p-8 text-center relative overflow-hidden">
+          <div className="h-1 w-full bg-gradient-to-r from-sky-500 to-cyan-600 rounded-full mb-4 opacity-80" />
           <div className="text-4xl mb-4">📭</div>
           <p className="text-zinc-600 dark:text-zinc-400mb-2">Nenhum bouquet encontrado</p>
           <p className="text-sm text-zinc-500 mb-4">

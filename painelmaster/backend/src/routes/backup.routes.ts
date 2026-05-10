@@ -11,9 +11,9 @@ import {
 
 const router = Router();
 
-// Todas as rotas requerem autenticação e apenas SUPER_ADMIN, ADMIN ou MASTER_RESELLER
+// Todas as rotas requerem autenticação e apenas SUPER_ADMIN ou ADMIN
 router.use(authMiddleware);
-router.use(requireRole('SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER'));
+router.use(requireRole('SUPER_ADMIN', 'ADMIN'));
 
 router.post('/', createBackup);
 router.get('/', getBackups);

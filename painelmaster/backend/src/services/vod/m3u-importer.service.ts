@@ -92,6 +92,21 @@ export class M3UImporterService {
       .trim();
   }
 
+  private normalizeGroupName(raw: string | null | undefined): string {
+    let s = String(raw || '').trim();
+    if (!s) return 'Sem categoria';
+    s = s.replace(/\s+/g, ' ');
+    while (true) {
+      const next = s
+        .replace(/^(filmes?|movies?|cinema|vod|s[ée]ries?|series|tv\s*shows?|shows?)\s*[\|\-:]\s*/i, '')
+        .trim();
+      if (next === s) break;
+      s = next;
+      if (!s) break;
+    }
+    return s || 'Sem categoria';
+  }
+
   constructor(server: XuiServer, tmdbApiKey?: string) {
     this.server = server;
     this.dbClient = new XUIVodDBClient(server);
@@ -122,7 +137,7 @@ export class M3UImporterService {
     const categoryMap = new Map<string, number>(); // ⚠️ FIX: Mudado para Map<string, number> (apenas contador)
 
     for (const item of items) {
-      const categoryName = item.group || 'Sem categoria';
+      const categoryName = this.normalizeGroupName(item.group);
       categoryMap.set(categoryName, (categoryMap.get(categoryName) || 0) + 1);
     }
 
@@ -205,6 +220,7 @@ export class M3UImporterService {
         const lowerName = name.toLowerCase();
         const rawGroup = groupMatch ? groupMatch[1] : '';
         const lowerGroup = rawGroup.toLowerCase();
+        const normalizedGroup = this.normalizeGroupName(rawGroup);
         
         // ===== REGRA PRIORITÁRIA: GRUPO COMEÇA COM "FILME/FILMES" = SEMPRE FILME =====
         // Padrão observado no M3U: "Filmes | Romance", "Filmes | Ação", etc
@@ -218,7 +234,7 @@ export class M3UImporterService {
           currentItem = {
             name: name,
             logo: tvgLogoMatch ? tvgLogoMatch[1] : undefined,
-            group: rawGroup,
+            group: normalizedGroup,
             tvgId: tvgIdMatch ? tvgIdMatch[1] : undefined,
             tvgName: tvgNameMatch ? tvgNameMatch[1] : undefined,
             type,
@@ -236,7 +252,7 @@ export class M3UImporterService {
             currentItem = {
               name: name,
               logo: tvgLogoMatch ? tvgLogoMatch[1] : undefined,
-              group: rawGroup,
+              group: normalizedGroup,
               tvgId: tvgIdMatch ? tvgIdMatch[1] : undefined,
               tvgName: tvgNameMatch ? tvgNameMatch[1] : undefined,
               type,
@@ -382,7 +398,7 @@ export class M3UImporterService {
         currentItem = {
           name: name,
           logo: tvgLogoMatch ? tvgLogoMatch[1] : undefined,
-          group: rawGroup,
+          group: normalizedGroup,
           tvgId: tvgIdMatch ? tvgIdMatch[1] : undefined,
           tvgName: tvgNameMatch ? tvgNameMatch[1] : undefined,
           type,
@@ -589,19 +605,20 @@ export class M3UImporterService {
 
         for (const mapping of options.categoryMappings) {
           if (!mapping.importCategory || mapping.action === 'ignore') continue;
+          const m3uCategory = this.normalizeGroupName(mapping.m3uCategory);
 
           if (mapping.action === 'map' && mapping.xuiCategoryId) {
             // Mapear para categoria existente
-            categoriesToMap.set(mapping.m3uCategory, mapping.xuiCategoryId);
-            logger.info(`[M3UImporter] Mapeando "${mapping.m3uCategory}" → XUI ID ${mapping.xuiCategoryId}`);
+            categoriesToMap.set(m3uCategory, mapping.xuiCategoryId);
+            logger.info(`[M3UImporter] Mapeando "${m3uCategory}" → XUI ID ${mapping.xuiCategoryId}`);
           } else if (mapping.action === 'create') {
             // Marcar para criar depois
-            const categoryName = mapping.newCategoryName || mapping.m3uCategory;
+            const categoryName = mapping.newCategoryName || m3uCategory;
             // Determinar tipo baseado nos itens dessa categoria
-            const categoryItems = [...movies, ...series].filter(item => (item.group || 'Sem categoria') === mapping.m3uCategory);
+            const categoryItems = [...movies, ...series].filter(item => this.normalizeGroupName(item.group) === m3uCategory);
             const hasSeries = categoryItems.some(item => item.type === 'series');
             const categoryType = hasSeries ? 'series' : 'vod';
-            categoriesToCreate.push({ m3uCategory: mapping.m3uCategory, categoryName, categoryType });
+            categoriesToCreate.push({ m3uCategory, categoryName, categoryType });
           }
         }
 
@@ -639,12 +656,12 @@ export class M3UImporterService {
         const originalSeriesCount = series.length;
 
         filteredMovies = movies.filter(item => {
-          const category = item.group || 'Sem categoria';
+          const category = this.normalizeGroupName(item.group);
           return allowedCategories.has(category);
         });
 
         filteredSeries = series.filter(item => {
-          const category = item.group || 'Sem categoria';
+          const category = this.normalizeGroupName(item.group);
           return allowedCategories.has(category);
         });
 
@@ -751,7 +768,7 @@ export class M3UImporterService {
       // � CORREÇÃO: Criar mapa normalizado para comparação case-insensitive e sem espaços extras
       const normalizedCategoryIdMap = new Map<string, number>();
       for (const [key, value] of categoryIdMap) {
-        const normalizedKey = key.toLowerCase().trim().replace(/\s+/g, ' ');
+        const normalizedKey = this.normalizeGroupName(key).toLowerCase().trim().replace(/\s+/g, ' ');
         normalizedCategoryIdMap.set(normalizedKey, value);
         logger.debug(`[M3UImporter] Mapa normalizado: "${normalizedKey}" → ${value}`);
       }
@@ -759,7 +776,7 @@ export class M3UImporterService {
       // �🔍 DEBUG: Log do primeiro filme para verificar o mapeamento
       if (filteredMovies.length > 0) {
         const firstItem = filteredMovies[0];
-        const firstCategoryName = firstItem.group || 'Sem categoria';
+        const firstCategoryName = this.normalizeGroupName(firstItem.group);
         const normalizedFirstCategory = firstCategoryName.toLowerCase().trim().replace(/\s+/g, ' ');
         const firstCategoryId = categoryIdMap.get(firstCategoryName) || normalizedCategoryIdMap.get(normalizedFirstCategory) || categoryIdMap.get('*');
         logger.info(`[M3UImporter] 🔍 DEBUG MAPEAMENTO PRIMEIRO FILME:`);
@@ -779,7 +796,7 @@ export class M3UImporterService {
       }
       
       const movieData: MovieData[] = filteredMovies.map((item, index) => {
-        const categoryName = item.group || 'Sem categoria';
+        const categoryName = this.normalizeGroupName(item.group);
         const normalizedCategory = categoryName.toLowerCase().trim().replace(/\s+/g, ' ');
         // Tentar match exato primeiro, depois normalizado, depois fallback
         const categoryId = categoryIdMap.get(categoryName) || normalizedCategoryIdMap.get(normalizedCategory) || categoryIdMap.get('*');
@@ -2027,5 +2044,3 @@ export class M3UImporterService {
     });
   }
 }
-
-

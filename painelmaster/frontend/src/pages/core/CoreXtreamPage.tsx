@@ -4,7 +4,9 @@ import toast from 'react-hot-toast';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { Badge, Button, Card, Input, Modal, Select, Spinner } from '../../components/ui';
+import { useDebounce } from '../../hooks/useDebounce';
 import { useAuthStore } from '../../store/authStore';
+import { getImageUrl } from '../../utils/imageUrl';
 
 function normalizeM3UUrlInput(raw: string) {
   const s = String(raw || '').trim();
@@ -34,6 +36,13 @@ type CoreStream = {
   bouquetIds?: string[];
   serverIds?: string[];
   createdAt: string;
+};
+
+type CorePagination = {
+  page: number;
+  perPage: number;
+  total: number;
+  totalPages: number;
 };
 
 type CoreEdgeServer = {
@@ -72,10 +81,24 @@ type CoreEdgeServer = {
 
 type CoreBouquet = {
   id: string;
+  kind: 'LIVE' | 'MOVIE' | 'SERIES';
   name: string;
   isActive: boolean;
+  sortOrder: number;
   createdAt: string;
-  _count?: { streams: number };
+  _count?: { streams?: number; vodItems?: number; series?: number };
+};
+
+type CoreM3UPreview = {
+  url: string;
+  type: 'all' | 'live' | 'movie' | 'series' | 'vod';
+  stats: { total: number; live: number; movies: number; series: number };
+  categories: Array<{ key: string; kind: 'LIVE' | 'MOVIE' | 'SERIES'; name: string; count: number; isAdult: boolean }>;
+  sample: {
+    live: Array<{ name: string; url: string; group?: string; logo?: string; tvgId?: string; tvgName?: string; type: 'live' }>;
+    movie: Array<{ name: string; url: string; group?: string; logo?: string; tvgId?: string; tvgName?: string; type: 'movie' }>;
+    series: Array<{ name: string; url: string; group?: string; logo?: string; tvgId?: string; tvgName?: string; type: 'series' }>;
+  };
 };
 
 type CorePackage = {
@@ -247,6 +270,20 @@ type CoreEdgeServersMetricsResponse = {
         host?: string | null;
       } | null;
     }>;
+  };
+};
+
+type CoreMainMetricsResponse = {
+  data: {
+    timestamp: string;
+    uptimeSeconds: number;
+    cpuPercent: number | null;
+    memPercent: number | null;
+    net: { rxBytes: string; txBytes: string } | null;
+    activeConnections: number | null;
+    activeUsers: number | null;
+    flowsOn: number | null;
+    flowsOff: number | null;
   };
 };
 
@@ -425,13 +462,26 @@ type CoreM3USchedule = {
   createdAt: string;
 };
 
-type TabKey = 'overview' | 'streams' | 'servers' | 'connections' | 'bouquets' | 'packages' | 'lines' | 'payments' | 'vod' | 'series' | 'schedules' | 'epg';
+type TabKey =
+  | 'overview'
+  | 'streams'
+  | 'monitor'
+  | 'servers'
+  | 'connections'
+  | 'bouquets'
+  | 'packages'
+  | 'lines'
+  | 'payments'
+  | 'vod'
+  | 'series'
+  | 'schedules'
+  | 'epg';
 
 const parseTabFromSearch = (search: string): TabKey => {
   const raw = new URLSearchParams(search || '').get('tab');
   const t = (raw || '').trim();
-  const allowed: TabKey[] = ['overview', 'streams', 'servers', 'connections', 'bouquets', 'packages', 'lines', 'payments', 'vod', 'series', 'schedules', 'epg'];
-  return allowed.includes(t as TabKey) ? (t as TabKey) : 'lines';
+  const allowed: TabKey[] = ['overview', 'streams', 'monitor', 'servers', 'connections', 'bouquets', 'packages', 'lines', 'payments', 'vod', 'series', 'schedules', 'epg'];
+  return allowed.includes(t as TabKey) ? (t as TabKey) : 'overview';
 };
 
 const toDateInput = (iso: string) => {
@@ -577,6 +627,68 @@ export function CoreXtreamPage() {
   const [bulkApplyServersModalOpen, setBulkApplyServersModalOpen] = useState(false);
   const [bulkApplyServersMode, setBulkApplyServersMode] = useState<'append' | 'replace'>('append');
   const [bulkApplyServersResult, setBulkApplyServersResult] = useState<CoreBulkApplyServersResponse['data'] | null>(null);
+  const [bulkEditStreamsModalOpen, setBulkEditStreamsModalOpen] = useState(false);
+  const [bulkDeleteStreamsModalOpen, setBulkDeleteStreamsModalOpen] = useState(false);
+  const [bulkStreamForm, setBulkStreamForm] = useState({
+    status: 'keep' as 'keep' | 'active' | 'inactive',
+    catchup: 'keep' as 'keep' | 'on' | 'off',
+    catchupDays: '',
+    moveToBouquetId: '',
+    ensureInPackageId: '',
+  });
+
+  const [selectedVodIds, setSelectedVodIds] = useState<string[]>([]);
+  const [bulkEditVodModalOpen, setBulkEditVodModalOpen] = useState(false);
+  const [bulkDeleteVodModalOpen, setBulkDeleteVodModalOpen] = useState(false);
+  const [bulkVodStatus, setBulkVodStatus] = useState<'keep' | 'active' | 'inactive'>('keep');
+  const [bulkVodMoveToBouquetId, setBulkVodMoveToBouquetId] = useState('');
+  const [bulkVodEnsureInPackageId, setBulkVodEnsureInPackageId] = useState('');
+
+  const [selectedSeriesIds, setSelectedSeriesIds] = useState<string[]>([]);
+  const [bulkEditSeriesModalOpen, setBulkEditSeriesModalOpen] = useState(false);
+  const [bulkDeleteSeriesModalOpen, setBulkDeleteSeriesModalOpen] = useState(false);
+  const [bulkSeriesStatus, setBulkSeriesStatus] = useState<'keep' | 'active' | 'inactive'>('keep');
+  const [bulkSeriesMoveToBouquetId, setBulkSeriesMoveToBouquetId] = useState('');
+  const [bulkSeriesEnsureInPackageId, setBulkSeriesEnsureInPackageId] = useState('');
+
+  const perPageOptions = useMemo(() => [10, 20, 50, 100, 200, 500, 1000], []);
+  const [streamsPage, setStreamsPage] = useState(1);
+  const [streamsPerPage, setStreamsPerPage] = useState(50);
+  const [streamsBouquetId, setStreamsBouquetId] = useState('');
+  const [streamsSearch, setStreamsSearch] = useState('');
+
+  const [vodPage, setVodPage] = useState(1);
+  const [vodPerPage, setVodPerPage] = useState(50);
+  const [vodBouquetId, setVodBouquetId] = useState('');
+  const [vodSearch, setVodSearch] = useState('');
+
+  const [seriesPage, setSeriesPage] = useState(1);
+  const [seriesPerPage, setSeriesPerPage] = useState(50);
+  const [seriesBouquetId, setSeriesBouquetId] = useState('');
+  const [seriesSearch, setSeriesSearch] = useState('');
+
+  const debouncedStreamsSearch = useDebounce(streamsSearch, 400);
+  const debouncedVodSearch = useDebounce(vodSearch, 400);
+  const debouncedSeriesSearch = useDebounce(seriesSearch, 400);
+
+  useEffect(() => {
+    setStreamsPage(1);
+    setSelectedStreamIds([]);
+  }, [debouncedStreamsSearch]);
+
+  useEffect(() => {
+    setVodPage(1);
+    setSelectedVodIds([]);
+  }, [debouncedVodSearch]);
+
+  useEffect(() => {
+    setSeriesPage(1);
+    setSelectedSeriesIds([]);
+  }, [debouncedSeriesSearch]);
+
+  const [overviewRecentFilter, setOverviewRecentFilter] = useState<'all' | 'Streams' | 'Filmes' | 'Séries'>('all');
+  const [overviewRecentSearch, setOverviewRecentSearch] = useState('');
+  const debouncedOverviewRecentSearch = useDebounce(overviewRecentSearch, 300);
 
   const [edgeJobId, setEdgeJobId] = useState<string | null>(null);
   const [edgeJobStatus, setEdgeJobStatus] = useState<string | null>(null);
@@ -587,6 +699,37 @@ export function CoreXtreamPage() {
     const next = parseTabFromSearch(location.search);
     setTab((prev) => (prev === next ? prev : next));
   }, [location.search]);
+
+  const openImportModal = () => {
+    setImportForm({
+      url: '',
+      mode: 'append',
+      type: 'all',
+      createPackage: true,
+      packageName: 'PACOTE PADRÃO',
+      createLine: false,
+      lineUsername: '',
+      linePassword: '',
+      lineExpiresDays: 30,
+      background: true,
+      enrichWithTMDB: true,
+    });
+    setM3uPreview(null);
+    setM3uPreviewSelectedKeys([]);
+    setM3uPreviewSearch('');
+    setExcludeAdultCategories(true);
+    setImportModalOpen(true);
+  };
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search || '');
+    const action = String(params.get('action') || '').trim();
+    if (action !== 'import-m3u') return;
+
+    openImportModal();
+    params.delete('action');
+    navigate({ pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : '' }, { replace: true });
+  }, [location.pathname, location.search]);
 
   const setActiveTab = (next: TabKey) => {
     const params = new URLSearchParams(location.search || '');
@@ -605,6 +748,7 @@ export function CoreXtreamPage() {
 
   const isBillingBlocked = !!billingInfoData?.data?.isBlocked;
   const isAdmin = currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'ADMIN';
+  const canEditContent = isAdmin;
 
   const { data: panelSettingsData } = useQuery<{ data: { panelName: string; logoUrl: string | null; publicBaseUrl?: string | null } }>({
     queryKey: ['panelSettings'],
@@ -662,6 +806,7 @@ export function CoreXtreamPage() {
     bouquetIds: [] as string[],
     serverIds: [] as string[],
   });
+  const [streamLogoFile, setStreamLogoFile] = useState<File | null>(null);
 
   const [serverForm, setServerForm] = useState({
     name: '',
@@ -740,6 +885,7 @@ export function CoreXtreamPage() {
     isActive: true,
     bouquetIds: [] as string[],
   });
+  const [vodPosterFile, setVodPosterFile] = useState<File | null>(null);
 
   const [seriesForm, setSeriesForm] = useState({
     name: '',
@@ -747,6 +893,7 @@ export function CoreXtreamPage() {
     isActive: true,
     bouquetIds: [] as string[],
   });
+  const [seriesCoverFile, setSeriesCoverFile] = useState<File | null>(null);
 
   const [episodeForm, setEpisodeForm] = useState({
     season: 1,
@@ -769,6 +916,10 @@ export function CoreXtreamPage() {
     background: true,
     enrichWithTMDB: true,
   });
+  const [m3uPreview, setM3uPreview] = useState<CoreM3UPreview | null>(null);
+  const [m3uPreviewSelectedKeys, setM3uPreviewSelectedKeys] = useState<string[]>([]);
+  const [m3uPreviewSearch, setM3uPreviewSearch] = useState('');
+  const [excludeAdultCategories, setExcludeAdultCategories] = useState(true);
 
   const [scheduleForm, setScheduleForm] = useState({
     name: '',
@@ -799,10 +950,21 @@ export function CoreXtreamPage() {
     isActive: true,
   });
 
-  const { data: streamsData, isLoading: streamsLoading } = useQuery<{ data: CoreStream[] }>({
-    queryKey: ['core-streams'],
+  const streamsQueryParams = useMemo(() => {
+    const page = tab === 'overview' ? 1 : streamsPage;
+    const perPage = tab === 'overview' ? 10 : streamsPerPage;
+    const bouquetId = tab === 'overview' ? '' : streamsBouquetId;
+    const search = tab === 'overview' ? '' : String(debouncedStreamsSearch || '').trim();
+    return { page, perPage, bouquetId, search };
+  }, [tab, streamsPage, streamsPerPage, streamsBouquetId, debouncedStreamsSearch]);
+
+  const { data: streamsData, isLoading: streamsLoading } = useQuery<{ data: CoreStream[]; pagination?: CorePagination }>({
+    queryKey: ['core-streams', streamsQueryParams.page, streamsQueryParams.perPage, streamsQueryParams.bouquetId, streamsQueryParams.search],
     queryFn: async () => {
-      const res = await api.get('/core/streams');
+      const params: any = { page: streamsQueryParams.page, perPage: streamsQueryParams.perPage };
+      if (streamsQueryParams.bouquetId) params.bouquetId = streamsQueryParams.bouquetId;
+      if (streamsQueryParams.search) params.search = streamsQueryParams.search;
+      const res = await api.get('/core/streams', { params });
       return res.data;
     },
   });
@@ -850,7 +1012,7 @@ export function CoreXtreamPage() {
     if (status === 'success') {
       const imported = m3uImportJob?.result?.imported;
       const msg = imported
-        ? `Importado: categorias ${imported.bouquetsCreated}, live ${imported.streamsCreated}, vod ${imported.vodCreated}, séries ${imported.seriesCreated}, eps ${imported.episodesCreated}, skip ${imported.skipped}`
+        ? `Importado: categorias ${imported.bouquetsCreated}, live ${imported.streamsCreated}, filmes ${imported.vodCreated}, séries ${imported.seriesCreated}, eps ${imported.episodesCreated}, skip ${imported.skipped}`
         : 'Importação concluída';
       toast.success(msg);
       if (m3uImportJob?.result?.createdLine?.username && m3uImportJob?.result?.createdLine?.password) {
@@ -884,8 +1046,8 @@ export function CoreXtreamPage() {
       const res = await api.get('/core/servers/status');
       return res.data;
     },
-    enabled: tab === 'servers',
-    refetchInterval: tab === 'servers' ? 10000 : false,
+    enabled: tab === 'servers' || tab === 'monitor',
+    refetchInterval: tab === 'servers' || tab === 'monitor' ? 10000 : false,
   });
 
   const { data: serversMetricsData, isLoading: serversMetricsLoading, refetch: serversMetricsRefetch } = useQuery<CoreEdgeServersMetricsResponse>({
@@ -894,8 +1056,18 @@ export function CoreXtreamPage() {
       const res = await api.get('/core/servers/metrics');
       return res.data;
     },
-    enabled: tab === 'servers',
-    refetchInterval: tab === 'servers' ? 10000 : false,
+    enabled: tab === 'servers' || tab === 'monitor',
+    refetchInterval: tab === 'servers' || tab === 'monitor' ? 10000 : false,
+  });
+
+  const { data: mainMetricsData, isLoading: mainMetricsLoading, refetch: mainMetricsRefetch } = useQuery<CoreMainMetricsResponse>({
+    queryKey: ['core-main-metrics'],
+    queryFn: async () => {
+      const res = await api.get('/core/monitor/metrics');
+      return res.data;
+    },
+    enabled: tab === 'monitor',
+    refetchInterval: tab === 'monitor' ? 10000 : false,
   });
 
   const { data: bouquetsData, isLoading: bouquetsLoading } = useQuery<{ data: CoreBouquet[] }>({
@@ -922,20 +1094,44 @@ export function CoreXtreamPage() {
     },
   });
 
-  const { data: vodData, isLoading: vodLoading } = useQuery<{ data: CoreVodItem[] }>({
-    queryKey: ['core-vod'],
+  const vodQueryParams = useMemo(() => {
+    const page = tab === 'overview' ? 1 : vodPage;
+    const perPage = tab === 'overview' ? 10 : vodPerPage;
+    const bouquetId = tab === 'overview' ? '' : vodBouquetId;
+    const search = tab === 'overview' ? '' : String(debouncedVodSearch || '').trim();
+    return { page, perPage, bouquetId, search };
+  }, [tab, vodPage, vodPerPage, vodBouquetId, debouncedVodSearch]);
+
+  const { data: vodData, isLoading: vodLoading } = useQuery<{ data: CoreVodItem[]; pagination?: CorePagination }>({
+    queryKey: ['core-vod', vodQueryParams.page, vodQueryParams.perPage, vodQueryParams.bouquetId, vodQueryParams.search],
     queryFn: async () => {
-      const res = await api.get('/core/vod');
+      const params: any = { page: vodQueryParams.page, perPage: vodQueryParams.perPage };
+      if (vodQueryParams.bouquetId) params.bouquetId = vodQueryParams.bouquetId;
+      if (vodQueryParams.search) params.search = vodQueryParams.search;
+      const res = await api.get('/core/vod', { params });
       return res.data;
     },
+    enabled: tab === 'vod' || tab === 'overview',
   });
 
-  const { data: seriesData, isLoading: seriesLoading } = useQuery<{ data: CoreSeries[] }>({
-    queryKey: ['core-series'],
+  const seriesQueryParams = useMemo(() => {
+    const page = tab === 'overview' ? 1 : seriesPage;
+    const perPage = tab === 'overview' ? 10 : seriesPerPage;
+    const bouquetId = tab === 'overview' ? '' : seriesBouquetId;
+    const search = tab === 'overview' ? '' : String(debouncedSeriesSearch || '').trim();
+    return { page, perPage, bouquetId, search };
+  }, [tab, seriesPage, seriesPerPage, seriesBouquetId, debouncedSeriesSearch]);
+
+  const { data: seriesData, isLoading: seriesLoading } = useQuery<{ data: CoreSeries[]; pagination?: CorePagination }>({
+    queryKey: ['core-series', seriesQueryParams.page, seriesQueryParams.perPage, seriesQueryParams.bouquetId, seriesQueryParams.search],
     queryFn: async () => {
-      const res = await api.get('/core/series');
+      const params: any = { page: seriesQueryParams.page, perPage: seriesQueryParams.perPage };
+      if (seriesQueryParams.bouquetId) params.bouquetId = seriesQueryParams.bouquetId;
+      if (seriesQueryParams.search) params.search = seriesQueryParams.search;
+      const res = await api.get('/core/series', { params });
       return res.data;
     },
+    enabled: tab === 'series' || tab === 'overview',
   });
 
   const { data: episodesData, isLoading: episodesLoading } = useQuery<{ data: CoreSeriesEpisode[] }>({
@@ -1066,12 +1262,33 @@ export function CoreXtreamPage() {
   });
 
   const streams = streamsData?.data || [];
+  const streamsPagination: CorePagination = (streamsData as any)?.pagination || {
+    page: streamsQueryParams.page,
+    perPage: streamsQueryParams.perPage,
+    total: streams.length,
+    totalPages: 1,
+  };
   const servers = serversData?.data || [];
   const bouquets = bouquetsData?.data || [];
+  const bouquetsForStreams = useMemo(() => bouquets.filter((b) => b.kind === 'LIVE'), [bouquets]);
+  const bouquetsForVod = useMemo(() => bouquets.filter((b) => b.kind === 'MOVIE'), [bouquets]);
+  const bouquetsForSeries = useMemo(() => bouquets.filter((b) => b.kind === 'SERIES'), [bouquets]);
   const packages = packagesData?.data || [];
   const lines = linesData?.data || [];
   const vodItems = vodData?.data || [];
+  const vodPagination: CorePagination = (vodData as any)?.pagination || {
+    page: vodQueryParams.page,
+    perPage: vodQueryParams.perPage,
+    total: vodItems.length,
+    totalPages: 1,
+  };
   const series = seriesData?.data || [];
+  const seriesPagination: CorePagination = (seriesData as any)?.pagination || {
+    page: seriesQueryParams.page,
+    perPage: seriesQueryParams.perPage,
+    total: series.length,
+    totalPages: 1,
+  };
   const episodes = episodesData?.data || [];
   const schedules = schedulesData?.data || [];
   const epgSources = epgSourcesData?.data || [];
@@ -1082,9 +1299,9 @@ export function CoreXtreamPage() {
   const paymentsList = useMemo(() => paymentsInfiniteData?.pages.flatMap((p) => p.data) || [], [paymentsInfiniteData]);
 
   const overviewCounts = useMemo(() => {
-    const activeStreams = streams.filter((s) => s.isActive).length;
-    const activeVod = vodItems.filter((v) => v.isActive).length;
-    const activeSeries = series.filter((s) => s.isActive).length;
+    const activeStreams = streamsPagination.total;
+    const activeVod = vodPagination.total;
+    const activeSeries = seriesPagination.total;
     const activeBouquets = bouquets.filter((b) => b.isActive).length;
     const activePackages = packages.filter((p) => p.isActive).length;
     const activeLines = lines.filter((l) => l.status === 'ACTIVE').length;
@@ -1101,7 +1318,7 @@ export function CoreXtreamPage() {
       activeLines,
       totalEpisodes,
     };
-  }, [streams, vodItems, series, bouquets, packages, lines]);
+  }, [streamsPagination.total, vodPagination.total, seriesPagination.total, series, bouquets, packages, lines]);
 
   const overviewRecent = useMemo(() => {
     const items: Array<{
@@ -1109,47 +1326,12 @@ export function CoreXtreamPage() {
       tab: TabKey;
       kind: string;
       name: string;
+      imageUrl?: string | null;
       createdAt: string;
       ts: number;
       badge: { label: string; variant: 'success' | 'warning' | 'info' };
     }> = [];
 
-    for (const b of bouquets) {
-      const ts = new Date(b.createdAt).getTime();
-      items.push({
-        key: `bouquet:${b.id}`,
-        tab: 'bouquets',
-        kind: 'Categoria',
-        name: b.name,
-        createdAt: b.createdAt,
-        ts: Number.isFinite(ts) ? ts : 0,
-        badge: { label: b.isActive ? 'ATIVO' : 'INATIVO', variant: b.isActive ? 'success' : 'warning' },
-      });
-    }
-    for (const p of packages) {
-      const ts = new Date(p.createdAt).getTime();
-      items.push({
-        key: `package:${p.id}`,
-        tab: 'packages',
-        kind: 'Pacote',
-        name: p.name,
-        createdAt: p.createdAt,
-        ts: Number.isFinite(ts) ? ts : 0,
-        badge: { label: p.isActive ? 'ATIVO' : 'INATIVO', variant: p.isActive ? 'success' : 'warning' },
-      });
-    }
-    for (const l of lines) {
-      const ts = new Date(l.createdAt).getTime();
-      items.push({
-        key: `line:${l.id}`,
-        tab: 'lines',
-        kind: 'Linha',
-        name: l.username,
-        createdAt: l.createdAt,
-        ts: Number.isFinite(ts) ? ts : 0,
-        badge: { label: l.status === 'ACTIVE' ? 'ATIVA' : 'DESATIVADA', variant: l.status === 'ACTIVE' ? 'success' : 'warning' },
-      });
-    }
     for (const s of streams) {
       const ts = new Date(s.createdAt).getTime();
       items.push({
@@ -1157,6 +1339,7 @@ export function CoreXtreamPage() {
         tab: 'streams',
         kind: 'Stream',
         name: s.name,
+        imageUrl: s.logoUrl || null,
         createdAt: s.createdAt,
         ts: Number.isFinite(ts) ? ts : 0,
         badge: { label: s.isActive ? 'ATIVO' : 'INATIVO', variant: s.isActive ? 'success' : 'warning' },
@@ -1167,8 +1350,9 @@ export function CoreXtreamPage() {
       items.push({
         key: `vod:${v.id}`,
         tab: 'vod',
-        kind: 'VOD',
+        kind: 'Filme',
         name: v.name,
+        imageUrl: v.posterUrl || null,
         createdAt: v.createdAt,
         ts: Number.isFinite(ts) ? ts : 0,
         badge: { label: v.isActive ? 'ATIVO' : 'INATIVO', variant: v.isActive ? 'success' : 'warning' },
@@ -1181,6 +1365,7 @@ export function CoreXtreamPage() {
         tab: 'series',
         kind: 'Série',
         name: s.name,
+        imageUrl: s.coverUrl || null,
         createdAt: s.createdAt,
         ts: Number.isFinite(ts) ? ts : 0,
         badge: { label: s.isActive ? 'ATIVA' : 'INATIVA', variant: s.isActive ? 'success' : 'warning' },
@@ -1189,7 +1374,20 @@ export function CoreXtreamPage() {
 
     items.sort((a, b) => b.ts - a.ts);
     return items.slice(0, 25);
-  }, [bouquets, packages, lines, streams, vodItems, series]);
+  }, [streams, vodItems, series]);
+
+  const overviewRecentFiltered = useMemo(() => {
+    const q = String(debouncedOverviewRecentSearch || '').trim().toLowerCase();
+    return overviewRecent.filter((it) => {
+      if (overviewRecentFilter !== 'all') {
+        if (overviewRecentFilter === 'Streams' && it.tab !== 'streams') return false;
+        if (overviewRecentFilter === 'Filmes' && it.tab !== 'vod') return false;
+        if (overviewRecentFilter === 'Séries' && it.tab !== 'series') return false;
+      }
+      if (!q) return true;
+      return String(it.name || '').toLowerCase().includes(q);
+    });
+  }, [overviewRecent, overviewRecentFilter, debouncedOverviewRecentSearch]);
 
   useEffect(() => {
     if (tab !== 'payments') setSelectedPaymentIds([]);
@@ -1422,6 +1620,28 @@ export function CoreXtreamPage() {
     },
   });
 
+  const uploadStreamLogoMutation = useMutation({
+    mutationFn: async (payload: { streamId: string; file: File }) => {
+      const form = new FormData();
+      form.append('logo', payload.file);
+      const res = await api.post(`/core/streams/${payload.streamId}/logo`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return res.data?.data as CoreStream;
+    },
+    onSuccess: (updated) => {
+      toast.success('Logo atualizado');
+      queryClient.invalidateQueries({ queryKey: ['core-streams'] });
+      if (editingStream?.id && updated?.id === editingStream.id) {
+        setStreamForm((p) => ({ ...p, logoUrl: updated.logoUrl || '' }));
+      }
+      setStreamLogoFile(null);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao enviar logo');
+    },
+  });
+
   const deleteStreamMutation = useMutation({
     mutationFn: async (id: string) => {
       await api.delete(`/core/streams/${id}`);
@@ -1462,6 +1682,40 @@ export function CoreXtreamPage() {
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error || 'Erro ao aplicar servidores');
+    },
+  });
+
+  const bulkUpdateStreamsMutation = useMutation({
+    mutationFn: async (payload: { streamIds: string[]; isActive?: boolean; tvArchive?: boolean; tvArchiveDuration?: number; moveToBouquetId?: string; ensureInPackageId?: string }) => {
+      const res = await api.put('/core/streams/bulk', payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['core-streams'] });
+      queryClient.invalidateQueries({ queryKey: ['core-bouquets'] });
+      toast.success('Atualização em massa concluída');
+      setSelectedStreamIds([]);
+      setBulkEditStreamsModalOpen(false);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao atualizar em massa');
+    },
+  });
+
+  const bulkDeleteStreamsMutation = useMutation({
+    mutationFn: async (payload: { streamIds: string[] }) => {
+      const res = await api.delete('/core/streams/bulk', { data: payload });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['core-streams'] });
+      queryClient.invalidateQueries({ queryKey: ['core-bouquets'] });
+      toast.success('Streams removidas');
+      setSelectedStreamIds([]);
+      setBulkDeleteStreamsModalOpen(false);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao remover em massa');
     },
   });
 
@@ -1673,6 +1927,23 @@ export function CoreXtreamPage() {
     },
   });
 
+  const moveBouquetMutation = useMutation({
+    mutationFn: async (payload: { id: string; direction: 'up' | 'down' | 'top' | 'bottom' }) => {
+      const res = await api.post(`/core/bouquets/${payload.id}/move`, { direction: payload.direction });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['core-bouquets'] });
+      queryClient.invalidateQueries({ queryKey: ['core-packages'] });
+      queryClient.invalidateQueries({ queryKey: ['core-streams'] });
+      queryClient.invalidateQueries({ queryKey: ['core-vod'] });
+      queryClient.invalidateQueries({ queryKey: ['core-series'] });
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao mover categoria');
+    },
+  });
+
   const createPackageMutation = useMutation({
     mutationFn: async () => {
       const payload = {
@@ -1843,12 +2114,12 @@ export function CoreXtreamPage() {
       return res.data;
     },
     onSuccess: () => {
-      toast.success('VOD criado');
+      toast.success('Filme criado');
       queryClient.invalidateQueries({ queryKey: ['core-vod'] });
       setVodModalOpen(false);
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Erro ao criar VOD');
+      toast.error(error.response?.data?.error || 'Erro ao criar filme');
     },
   });
 
@@ -1866,12 +2137,34 @@ export function CoreXtreamPage() {
       return res.data;
     },
     onSuccess: () => {
-      toast.success('VOD atualizado');
+      toast.success('Filme atualizado');
       queryClient.invalidateQueries({ queryKey: ['core-vod'] });
       setVodModalOpen(false);
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Erro ao atualizar VOD');
+      toast.error(error.response?.data?.error || 'Erro ao atualizar filme');
+    },
+  });
+
+  const uploadVodPosterMutation = useMutation({
+    mutationFn: async (payload: { vodId: string; file: File }) => {
+      const form = new FormData();
+      form.append('poster', payload.file);
+      const res = await api.post(`/core/vod/${payload.vodId}/poster`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return res.data?.data as CoreVodItem;
+    },
+    onSuccess: (updated) => {
+      toast.success('Capa atualizada');
+      queryClient.invalidateQueries({ queryKey: ['core-vod'] });
+      if (editingVod?.id && updated?.id === editingVod.id) {
+        setVodForm((p) => ({ ...p, posterUrl: updated.posterUrl || '' }));
+      }
+      setVodPosterFile(null);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao enviar capa');
     },
   });
 
@@ -1880,11 +2173,43 @@ export function CoreXtreamPage() {
       await api.delete(`/core/vod/${id}`);
     },
     onSuccess: () => {
-      toast.success('VOD removido');
+      toast.success('Filme removido');
       queryClient.invalidateQueries({ queryKey: ['core-vod'] });
     },
     onError: (error: any) => {
-      toast.error(error.response?.data?.error || 'Erro ao remover VOD');
+      toast.error(error.response?.data?.error || 'Erro ao remover filme');
+    },
+  });
+
+  const bulkUpdateVodMutation = useMutation({
+    mutationFn: async (payload: { vodIds: string[]; isActive?: boolean; moveToBouquetId?: string; ensureInPackageId?: string }) => {
+      const res = await api.put('/core/vod/bulk', payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['core-vod'] });
+      toast.success('Atualização em massa concluída');
+      setSelectedVodIds([]);
+      setBulkEditVodModalOpen(false);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao atualizar em massa');
+    },
+  });
+
+  const bulkDeleteVodMutation = useMutation({
+    mutationFn: async (payload: { vodIds: string[] }) => {
+      const res = await api.delete('/core/vod/bulk', { data: payload });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['core-vod'] });
+      toast.success('Filmes removidos');
+      setSelectedVodIds([]);
+      setBulkDeleteVodModalOpen(false);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao remover em massa');
     },
   });
 
@@ -1931,6 +2256,28 @@ export function CoreXtreamPage() {
     },
   });
 
+  const uploadSeriesCoverMutation = useMutation({
+    mutationFn: async (payload: { seriesId: string; file: File }) => {
+      const form = new FormData();
+      form.append('cover', payload.file);
+      const res = await api.post(`/core/series/${payload.seriesId}/cover`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return res.data?.data as CoreSeries;
+    },
+    onSuccess: (updated) => {
+      toast.success('Capa atualizada');
+      queryClient.invalidateQueries({ queryKey: ['core-series'] });
+      if (editingSeries?.id && updated?.id === editingSeries.id) {
+        setSeriesForm((p) => ({ ...p, coverUrl: updated.coverUrl || '' }));
+      }
+      setSeriesCoverFile(null);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao enviar capa');
+    },
+  });
+
   const deleteSeriesMutation = useMutation({
     mutationFn: async (id: string) => {
       await api.delete(`/core/series/${id}`);
@@ -1942,6 +2289,39 @@ export function CoreXtreamPage() {
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error || 'Erro ao remover série');
+    },
+  });
+
+  const bulkUpdateSeriesMutation = useMutation({
+    mutationFn: async (payload: { seriesIds: string[]; isActive?: boolean; moveToBouquetId?: string; ensureInPackageId?: string }) => {
+      const res = await api.put('/core/series/bulk', payload);
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['core-series'] });
+      toast.success('Atualização em massa concluída');
+      setSelectedSeriesIds([]);
+      setBulkEditSeriesModalOpen(false);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao atualizar em massa');
+    },
+  });
+
+  const bulkDeleteSeriesMutation = useMutation({
+    mutationFn: async (payload: { seriesIds: string[] }) => {
+      const res = await api.delete('/core/series/bulk', { data: payload });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['core-series'] });
+      queryClient.invalidateQueries({ queryKey: ['core-series-episodes'] });
+      toast.success('Séries removidas');
+      setSelectedSeriesIds([]);
+      setBulkDeleteSeriesModalOpen(false);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao remover em massa');
     },
   });
 
@@ -2009,6 +2389,7 @@ export function CoreXtreamPage() {
         url: normalizeM3UUrlInput(importForm.url),
         mode: importForm.mode,
         type: importForm.type,
+        includeCategories: m3uPreviewSelectedKeys.length ? m3uPreviewSelectedKeys : undefined,
         createPackage: importForm.createPackage,
         packageName: importForm.createPackage ? importForm.packageName : undefined,
         createLine: importForm.createLine,
@@ -2051,6 +2432,29 @@ export function CoreXtreamPage() {
       } else {
         toast.error(msg);
       }
+    },
+  });
+
+  const previewM3UMutation = useMutation({
+    mutationFn: async () => {
+      const payload: any = {
+        url: normalizeM3UUrlInput(importForm.url),
+        type: importForm.type,
+        sampleLimit: 25,
+      };
+      const res = await api.post('/core/import/m3u/preview', payload);
+      return res.data?.data as CoreM3UPreview;
+    },
+    onSuccess: (data) => {
+      setM3uPreview(data);
+      const categories = data?.categories || [];
+      setM3uPreviewSelectedKeys(
+        (excludeAdultCategories ? categories.filter((c) => !c.isAdult) : categories).map((c) => c.key),
+      );
+      toast.success('Prévia carregada');
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao gerar prévia');
     },
   });
 
@@ -2214,7 +2618,7 @@ export function CoreXtreamPage() {
       return res.data;
     },
     onSuccess: () => {
-      toast.success('Execução iniciada');
+      toast.success('EPG executado');
       queryClient.invalidateQueries({ queryKey: ['core-epg-sources'] });
       queryClient.invalidateQueries({ queryKey: ['core-epg-channels'] });
     },
@@ -2594,6 +2998,7 @@ export function CoreXtreamPage() {
   const openCreateStream = () => {
     setEditingStream(null);
     setStreamForm({ name: '', streamUrl: '', logoUrl: '', epgChannelId: '', tvArchive: false, tvArchiveDuration: 0, isActive: true, bouquetIds: [], serverIds: [] });
+    setStreamLogoFile(null);
     setStreamModalOpen(true);
   };
 
@@ -2610,6 +3015,7 @@ export function CoreXtreamPage() {
       bouquetIds: s.bouquetIds || [],
       serverIds: (s as any).serverIds || [],
     });
+    setStreamLogoFile(null);
     setStreamModalOpen(true);
   };
 
@@ -2883,6 +3289,7 @@ export function CoreXtreamPage() {
   const openCreateVod = () => {
     setEditingVod(null);
     setVodForm({ name: '', streamUrl: '', posterUrl: '', isActive: true, bouquetIds: [] });
+    setVodPosterFile(null);
     setVodModalOpen(true);
   };
 
@@ -2895,12 +3302,14 @@ export function CoreXtreamPage() {
       isActive: v.isActive,
       bouquetIds: v.bouquetIds || [],
     });
+    setVodPosterFile(null);
     setVodModalOpen(true);
   };
 
   const openCreateSeries = () => {
     setEditingSeries(null);
     setSeriesForm({ name: '', coverUrl: '', isActive: true, bouquetIds: [] });
+    setSeriesCoverFile(null);
     setSeriesModalOpen(true);
   };
 
@@ -2912,6 +3321,7 @@ export function CoreXtreamPage() {
       isActive: s.isActive,
       bouquetIds: s.bouquetIds || [],
     });
+    setSeriesCoverFile(null);
     setSeriesModalOpen(true);
   };
 
@@ -2938,12 +3348,32 @@ export function CoreXtreamPage() {
     });
   };
 
-  const tabButtonClass = (key: TabKey) =>
-    `px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-      tab === key
-        ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
-        : 'bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700'
-    }`;
+  const tabButtonClass = (key: TabKey) => {
+    const accents: Record<TabKey, string> = {
+      overview: 'from-cyan-500 to-blue-600 shadow-cyan-500/20',
+      lines: 'from-emerald-500 to-cyan-600 shadow-emerald-500/20',
+      connections: 'from-amber-500 to-orange-600 shadow-amber-500/20',
+      payments: 'from-fuchsia-500 to-violet-600 shadow-fuchsia-500/20',
+      packages: 'from-indigo-500 to-blue-600 shadow-indigo-500/20',
+      bouquets: 'from-sky-500 to-cyan-600 shadow-sky-500/20',
+      vod: 'from-rose-500 to-orange-500 shadow-rose-500/20',
+      series: 'from-violet-500 to-fuchsia-600 shadow-violet-500/20',
+      streams: 'from-cyan-500 to-emerald-600 shadow-cyan-500/20',
+      monitor: 'from-yellow-500 to-red-500 shadow-yellow-500/20',
+      servers: 'from-cyan-500 to-violet-600 shadow-cyan-500/20',
+      schedules: 'from-lime-500 to-emerald-600 shadow-lime-500/20',
+      epg: 'from-purple-500 to-indigo-600 shadow-purple-500/20',
+    };
+
+    const isActive = tab === key;
+    return [
+      'px-4 py-2 rounded-xl text-sm font-semibold transition-all',
+      'ring-1 ring-inset',
+      isActive
+        ? `bg-gradient-to-r ${accents[key]} text-white ring-white/10 shadow-sm`
+        : 'bg-white/70 text-zinc-800 ring-zinc-200 hover:bg-white dark:bg-zinc-900/60 dark:text-zinc-200 dark:ring-zinc-800 dark:hover:bg-zinc-900',
+    ].join(' ');
+  };
 
   const isBusy =
     streamsLoading ||
@@ -3003,7 +3433,10 @@ export function CoreXtreamPage() {
     terminatePlaybackSessionMutation.isPending ||
     startServerSshTestMutation.isPending ||
     startServerInstallMutation.isPending ||
-    cancelEdgeJobMutation.isPending;
+    cancelEdgeJobMutation.isPending ||
+    uploadStreamLogoMutation.isPending ||
+    uploadVodPosterMutation.isPending ||
+    uploadSeriesCoverMutation.isPending;
 
   return (
     <div className="space-y-6">
@@ -3020,44 +3453,7 @@ export function CoreXtreamPage() {
       <Card>
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-zinc-900 dark:text-white">Xtream Novo (Core)</h2>
-            <p className="text-sm text-zinc-600 dark:text-zinc-400">
-              Streams/VOD/Séries → Categorias → Pacotes → Linhas (XC via /get.php, /player_api.php)
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2 items-center">
-            <button className={tabButtonClass('overview')} onClick={() => setActiveTab('overview')}>Conteúdos</button>
-            <button className={tabButtonClass('lines')} onClick={() => setActiveTab('lines')}>Linhas</button>
-            <button className={tabButtonClass('connections')} onClick={() => setActiveTab('connections')}>Conexões</button>
-            <button className={tabButtonClass('payments')} onClick={() => setActiveTab('payments')}>Pagamentos</button>
-            <button className={tabButtonClass('packages')} onClick={() => setActiveTab('packages')}>Pacotes</button>
-            <button className={tabButtonClass('bouquets')} onClick={() => setActiveTab('bouquets')}>Categorias</button>
-            <button className={tabButtonClass('vod')} onClick={() => setActiveTab('vod')}>VOD</button>
-            <button className={tabButtonClass('series')} onClick={() => setActiveTab('series')}>Séries</button>
-            <button className={tabButtonClass('streams')} onClick={() => setActiveTab('streams')}>Streams</button>
-            <button className={tabButtonClass('servers')} onClick={() => setActiveTab('servers')}>Servidores</button>
-            <button className={tabButtonClass('schedules')} onClick={() => setActiveTab('schedules')}>Agendas</button>
-            <button className={tabButtonClass('epg')} onClick={() => setActiveTab('epg')}>EPG</button>
-            <Button
-              variant="outline"
-              disabled={isBillingBlocked}
-              onClick={() => {
-                setImportForm({
-                  url: '',
-                  mode: 'append',
-                  type: 'all',
-                  createPackage: true,
-                  packageName: 'PACOTE PADRÃO',
-                  createLine: false,
-                  lineUsername: '',
-                  linePassword: '',
-                  lineExpiresDays: 30,
-                });
-                setImportModalOpen(true);
-              }}
-            >
-              Importar M3U
-            </Button>
+            <h2 className="text-xl font-semibold text-zinc-900 dark:text-white">Xtream Novo</h2>
           </div>
         </div>
       </Card>
@@ -3140,47 +3536,40 @@ export function CoreXtreamPage() {
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Conteúdos do Painel</h3>
               <div className="text-sm text-zinc-600 dark:text-zinc-400">
-                Total: {streams.length + vodItems.length + series.length} itens
+                Total: {streamsPagination.total + vodPagination.total + seriesPagination.total} itens
               </div>
             </div>
             <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+              <button
+                type="button"
+                className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors"
+                onClick={() => setActiveTab('streams')}
+              >
                 <div className="text-xs text-zinc-600 dark:text-zinc-400">STREAMS</div>
-                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{streams.length}</div>
+                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{streamsPagination.total}</div>
                 <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Ativos: {overviewCounts.activeStreams}</div>
-              </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
-                <div className="text-xs text-zinc-600 dark:text-zinc-400">VOD</div>
-                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{vodItems.length}</div>
+              </button>
+              <button
+                type="button"
+                className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors"
+                onClick={() => setActiveTab('vod')}
+              >
+                <div className="text-xs text-zinc-600 dark:text-zinc-400">FILMES</div>
+                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{vodPagination.total}</div>
                 <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Ativos: {overviewCounts.activeVod}</div>
-              </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+              </button>
+              <button
+                type="button"
+                className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4 text-left hover:bg-zinc-50 dark:hover:bg-zinc-800/40 transition-colors"
+                onClick={() => setActiveTab('series')}
+              >
                 <div className="text-xs text-zinc-600 dark:text-zinc-400">SÉRIES</div>
-                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{series.length}</div>
+                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{seriesPagination.total}</div>
                 <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Ativas: {overviewCounts.activeSeries}</div>
-              </div>
+              </button>
               <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
                 <div className="text-xs text-zinc-600 dark:text-zinc-400">EPISÓDIOS</div>
                 <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{overviewCounts.totalEpisodes}</div>
-              </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
-                <div className="text-xs text-zinc-600 dark:text-zinc-400">CATEGORIAS</div>
-                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{bouquets.length}</div>
-                <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Ativas: {overviewCounts.activeBouquets}</div>
-              </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
-                <div className="text-xs text-zinc-600 dark:text-zinc-400">PACOTES</div>
-                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{packages.length}</div>
-                <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Ativos: {overviewCounts.activePackages}</div>
-              </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
-                <div className="text-xs text-zinc-600 dark:text-zinc-400">LINHAS</div>
-                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{lines.length}</div>
-                <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Ativas: {overviewCounts.activeLines}</div>
-              </div>
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
-                <div className="text-xs text-zinc-600 dark:text-zinc-400">SERVIDORES ATIVOS</div>
-                <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{activeServersCount}</div>
               </div>
             </div>
           </Card>
@@ -3188,13 +3577,45 @@ export function CoreXtreamPage() {
           <Card>
             <div className="flex items-center justify-between gap-3">
               <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Últimos adicionados</h3>
-              <div className="text-sm text-zinc-600 dark:text-zinc-400">{overviewRecent.length} item(ns)</div>
+              <div className="text-sm text-zinc-600 dark:text-zinc-400">{overviewRecentFiltered.length} item(ns)</div>
+            </div>
+            <div className="mt-3 flex flex-col md:flex-row gap-2 md:items-end md:justify-between">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 w-full md:max-w-2xl">
+                <Select
+                  label="Tipo"
+                  value={overviewRecentFilter}
+                  onChange={(e) => setOverviewRecentFilter(e.target.value as any)}
+                >
+                  <option value="all">Todos</option>
+                  <option value="Streams">Streams</option>
+                  <option value="Filmes">Filmes</option>
+                  <option value="Séries">Séries</option>
+                </Select>
+                <Input
+                  label="Pesquisar"
+                  value={overviewRecentSearch}
+                  onChange={(e) => setOverviewRecentSearch(e.target.value)}
+                  placeholder="Ex: Globo, Vingadores, The Boys..."
+                />
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setOverviewRecentFilter('all');
+                    setOverviewRecentSearch('');
+                  }}
+                >
+                  Limpar
+                </Button>
+              </div>
             </div>
             <div className="mt-4 overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead>
                   <tr className="text-left text-zinc-600 dark:text-zinc-400">
                     <th className="py-2 pr-4">Tipo</th>
+                    <th className="py-2 pr-4">Capa/Logo</th>
                     <th className="py-2 pr-4">Nome</th>
                     <th className="py-2 pr-4">Status</th>
                     <th className="py-2 pr-4">Criado em</th>
@@ -3202,9 +3623,23 @@ export function CoreXtreamPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {overviewRecent.map((it) => (
+                  {overviewRecentFiltered.map((it) => (
                     <tr key={it.key} className="border-t border-zinc-200/70 dark:border-zinc-800/70">
                       <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">{it.kind}</td>
+                      <td className="py-3 pr-4">
+                        {it.imageUrl ? (
+                          <img
+                            src={getImageUrl(it.imageUrl) || ''}
+                            alt=""
+                            className="w-8 h-8 rounded object-cover bg-white"
+                            onError={(e) => {
+                              (e.currentTarget as any).style.display = 'none';
+                            }}
+                          />
+                        ) : (
+                          <div className="w-8 h-8 rounded bg-zinc-100 dark:bg-zinc-800" />
+                        )}
+                      </td>
                       <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-white">{it.name}</td>
                       <td className="py-3 pr-4">
                         <Badge variant={it.badge.variant}>{it.badge.label}</Badge>
@@ -3219,9 +3654,9 @@ export function CoreXtreamPage() {
                       </td>
                     </tr>
                   ))}
-                  {overviewRecent.length === 0 ? (
+                  {overviewRecentFiltered.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
+                      <td colSpan={6} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
                         Nenhum conteúdo encontrado
                       </td>
                     </tr>
@@ -3236,10 +3671,10 @@ export function CoreXtreamPage() {
       {tab === 'lines' ? (
         <Card>
           <div className="flex items-center justify-between gap-3">
-            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Linhas</h3>
+            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Clientes</h3>
             <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={openSale} disabled={isBillingBlocked}>Vender Linha</Button>
-              <Button onClick={openCreateLine} disabled={isBillingBlocked}>Nova Linha</Button>
+              <Button variant="outline" onClick={openSale} disabled={isBillingBlocked}>Vender Cliente</Button>
+              <Button onClick={openCreateLine} disabled={isBillingBlocked}>Novo Cliente</Button>
             </div>
           </div>
           {publicCoreCheckoutUrl ? (
@@ -4338,7 +4773,7 @@ export function CoreXtreamPage() {
         <Card>
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Pacotes</h3>
-            <Button onClick={openCreatePackage} disabled={isBillingBlocked}>Novo Pacote</Button>
+            <Button onClick={openCreatePackage} disabled={isBillingBlocked || !canEditContent}>Novo Pacote</Button>
           </div>
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-sm">
@@ -4368,11 +4803,11 @@ export function CoreXtreamPage() {
                     </td>
                     <td className="py-3 pr-4">
                       <div className="flex items-center gap-2 justify-end">
-                        <Button variant="outline" size="sm" onClick={() => openEditPackage(p)} disabled={isBillingBlocked}>Editar</Button>
+                        <Button variant="outline" size="sm" onClick={() => openEditPackage(p)} disabled={isBillingBlocked || !canEditContent}>Editar</Button>
                         <Button
                           variant="danger"
                           size="sm"
-                          disabled={isBillingBlocked}
+                          disabled={isBillingBlocked || !canEditContent}
                           onClick={() => {
                             if (!confirm('Remover este pacote?')) return;
                             deletePackageMutation.mutate(p.id);
@@ -4401,15 +4836,16 @@ export function CoreXtreamPage() {
         <Card>
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Categorias</h3>
-            <Button onClick={openCreateBouquet} disabled={isBillingBlocked}>Nova Categoria</Button>
+            <Button onClick={openCreateBouquet} disabled={isBillingBlocked || !canEditContent}>Nova Categoria</Button>
           </div>
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-zinc-600 dark:text-zinc-400">
                   <th className="py-2 pr-4">Nome</th>
+                  <th className="py-2 pr-4">Tipo</th>
                   <th className="py-2 pr-4">Status</th>
-                  <th className="py-2 pr-4">Streams</th>
+                  <th className="py-2 pr-4">Itens</th>
                   <th className="py-2 pr-4"></th>
                 </tr>
               </thead>
@@ -4417,17 +4853,38 @@ export function CoreXtreamPage() {
                 {bouquets.map((b) => (
                   <tr key={b.id} className="border-t border-zinc-200/70 dark:border-zinc-800/70">
                     <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-white">{b.name}</td>
+                    <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">
+                      {b.kind === 'LIVE' ? 'Streams' : b.kind === 'MOVIE' ? 'Filmes' : 'Séries'}
+                    </td>
                     <td className="py-3 pr-4">
                       <Badge variant={b.isActive ? 'success' : 'warning'}>{b.isActive ? 'ATIVO' : 'INATIVO'}</Badge>
                     </td>
-                    <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">{b._count?.streams ?? '-'}</td>
+                    <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">
+                      {b.kind === 'LIVE' ? (b._count?.streams ?? 0) : b.kind === 'MOVIE' ? (b._count?.vodItems ?? 0) : (b._count?.series ?? 0)}
+                    </td>
                     <td className="py-3 pr-4">
                       <div className="flex items-center gap-2 justify-end">
-                        <Button variant="outline" size="sm" onClick={() => openEditBouquet(b)} disabled={isBillingBlocked}>Editar</Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={isBillingBlocked || !canEditContent || moveBouquetMutation.isPending}
+                          onClick={() => moveBouquetMutation.mutate({ id: b.id, direction: 'up' })}
+                        >
+                          ↑
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={isBillingBlocked || !canEditContent || moveBouquetMutation.isPending}
+                          onClick={() => moveBouquetMutation.mutate({ id: b.id, direction: 'down' })}
+                        >
+                          ↓
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => openEditBouquet(b)} disabled={isBillingBlocked || !canEditContent}>Editar</Button>
                         <Button
                           variant="danger"
                           size="sm"
-                          disabled={isBillingBlocked}
+                          disabled={isBillingBlocked || !canEditContent}
                           onClick={() => {
                             if (!confirm('Remover esta categoria?')) return;
                             deleteBouquetMutation.mutate(b.id);
@@ -4441,7 +4898,7 @@ export function CoreXtreamPage() {
                 ))}
                 {bouquets.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
+                    <td colSpan={5} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
                       Nenhum bouquet criado ainda
                     </td>
                   </tr>
@@ -4454,16 +4911,139 @@ export function CoreXtreamPage() {
 
       {tab === 'vod' ? (
         <Card>
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">VOD</h3>
-            <Button onClick={openCreateVod} disabled={isBillingBlocked}>Novo VOD</Button>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Filmes</h3>
+            <div className="flex items-center gap-2">
+              <div className="text-sm text-zinc-600 dark:text-zinc-400">{vodPagination.total} registro(s)</div>
+              {selectedVodIds.length ? (
+                <div className="text-sm text-zinc-600 dark:text-zinc-400">{selectedVodIds.length} selecionado(s)</div>
+              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isBillingBlocked || !canEditContent}
+                onClick={() => {
+                  if (!selectedVodIds.length) {
+                    toast.error('Selecione pelo menos 1 filme');
+                    return;
+                  }
+                  setBulkVodStatus('keep');
+                  setBulkEditVodModalOpen(true);
+                }}
+              >
+                Editar em massa
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={isBillingBlocked || !canEditContent}
+                onClick={() => {
+                  if (!selectedVodIds.length) {
+                    toast.error('Selecione pelo menos 1 filme');
+                    return;
+                  }
+                  setBulkDeleteVodModalOpen(true);
+                }}
+              >
+                Apagar em massa
+              </Button>
+              <Button variant="outline" size="sm" disabled={selectedVodIds.length === 0} onClick={() => setSelectedVodIds([])}>
+                Limpar
+              </Button>
+              <Button onClick={openCreateVod} disabled={isBillingBlocked || !canEditContent}>Novo Filme</Button>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="min-w-[260px]">
+                <Input
+                  label="Pesquisar"
+                  value={vodSearch}
+                  onChange={(e) => setVodSearch(e.target.value)}
+                  placeholder="Nome do filme..."
+                />
+              </div>
+              <div className="min-w-[240px]">
+                <label className="block text-sm font-medium mb-1 text-zinc-700 dark:text-zinc-300">Categorias</label>
+                <Select
+                  value={vodBouquetId}
+                  onChange={(e) => {
+                    setVodBouquetId(e.target.value);
+                    setVodPage(1);
+                    setSelectedVodIds([]);
+                  }}
+                >
+                  <option value="">Todas as Categorias</option>
+                  {bouquetsForVod.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="min-w-[140px]">
+                <label className="block text-sm font-medium mb-1 text-zinc-700 dark:text-zinc-300">Mostrar</label>
+                <Select
+                  value={String(vodPerPage)}
+                  onChange={(e) => {
+                    setVodPerPage(parseInt(e.target.value, 10));
+                    setVodPage(1);
+                    setSelectedVodIds([]);
+                  }}
+                >
+                  {perPageOptions.map((n) => (
+                    <option key={n} value={String(n)}>{n}</option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 justify-end">
+              <div className="text-sm text-zinc-600 dark:text-zinc-400">
+                Página <span className="font-medium text-zinc-900 dark:text-white">{vodPagination.page}</span> de{' '}
+                <span className="font-medium text-zinc-900 dark:text-white">{vodPagination.totalPages}</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={vodPagination.page <= 1}
+                onClick={() => {
+                  setVodPage((p) => Math.max(1, p - 1));
+                  setSelectedVodIds([]);
+                }}
+              >
+                Anterior
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={vodPagination.page >= vodPagination.totalPages}
+                onClick={() => {
+                  setVodPage((p) => p + 1);
+                  setSelectedVodIds([]);
+                }}
+              >
+                Próxima
+              </Button>
+            </div>
           </div>
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-zinc-600 dark:text-zinc-400">
+                  <th className="py-2 pr-4 sticky left-0 bg-white/90 dark:bg-zinc-950/90 backdrop-blur z-10">
+                    <input
+                      type="checkbox"
+                      checked={vodItems.length > 0 && vodItems.every((v) => selectedVodIds.includes(v.id))}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        if (checked) setSelectedVodIds(vodItems.map((v) => v.id));
+                        else setSelectedVodIds([]);
+                      }}
+                    />
+                  </th>
                   <th className="py-2 pr-4">Nome</th>
                   <th className="py-2 pr-4">Status</th>
+                  <th className="py-2 pr-4">Capa</th>
                   <th className="py-2 pr-4">URL</th>
                   <th className="py-2 pr-4">Categorias</th>
                   <th className="py-2 pr-4"></th>
@@ -4472,9 +5052,36 @@ export function CoreXtreamPage() {
               <tbody>
                 {vodItems.map((v) => (
                   <tr key={v.id} className="border-t border-zinc-200/70 dark:border-zinc-800/70">
+                    <td className="py-3 pr-4 sticky left-0 bg-white/90 dark:bg-zinc-950/90 backdrop-blur z-10">
+                      <input
+                        type="checkbox"
+                        checked={selectedVodIds.includes(v.id)}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setSelectedVodIds((prev) => {
+                            if (checked) return prev.includes(v.id) ? prev : [...prev, v.id];
+                            return prev.filter((id) => id !== v.id);
+                          });
+                        }}
+                      />
+                    </td>
                     <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-white">{v.name}</td>
                     <td className="py-3 pr-4">
                       <Badge variant={v.isActive ? 'success' : 'warning'}>{v.isActive ? 'ATIVO' : 'INATIVO'}</Badge>
+                    </td>
+                    <td className="py-3 pr-4">
+                      {v.posterUrl ? (
+                        <img
+                          src={getImageUrl(v.posterUrl) || ''}
+                          alt=""
+                          className="w-8 h-8 rounded object-cover bg-white"
+                          onError={(e) => {
+                            (e.currentTarget as any).style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded bg-zinc-100 dark:bg-zinc-800" />
+                      )}
                     </td>
                     <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300 truncate max-w-[380px]">{v.streamUrl}</td>
                     <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">
@@ -4482,13 +5089,13 @@ export function CoreXtreamPage() {
                     </td>
                     <td className="py-3 pr-4">
                       <div className="flex items-center gap-2 justify-end">
-                        <Button variant="outline" size="sm" onClick={() => openEditVod(v)} disabled={isBillingBlocked}>Editar</Button>
+                        <Button variant="outline" size="sm" onClick={() => openEditVod(v)} disabled={isBillingBlocked || !canEditContent}>Editar</Button>
                         <Button
                           variant="danger"
                           size="sm"
-                          disabled={isBillingBlocked}
+                          disabled={isBillingBlocked || !canEditContent}
                           onClick={() => {
-                            if (!confirm('Remover este VOD?')) return;
+                            if (!confirm('Remover este filme?')) return;
                             deleteVodMutation.mutate(v.id);
                           }}
                         >
@@ -4500,8 +5107,8 @@ export function CoreXtreamPage() {
                 ))}
                 {vodItems.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
-                      Nenhum VOD criado ainda
+                    <td colSpan={7} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
+                      Nenhum filme cadastrado ainda
                     </td>
                   </tr>
                 ) : null}
@@ -4513,16 +5120,139 @@ export function CoreXtreamPage() {
 
       {tab === 'series' ? (
         <Card>
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Séries</h3>
-            <Button onClick={openCreateSeries} disabled={isBillingBlocked}>Nova Série</Button>
+            <div className="flex items-center gap-2">
+              <div className="text-sm text-zinc-600 dark:text-zinc-400">{seriesPagination.total} registro(s)</div>
+              {selectedSeriesIds.length ? (
+                <div className="text-sm text-zinc-600 dark:text-zinc-400">{selectedSeriesIds.length} selecionado(s)</div>
+              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isBillingBlocked || !canEditContent}
+                onClick={() => {
+                  if (!selectedSeriesIds.length) {
+                    toast.error('Selecione pelo menos 1 série');
+                    return;
+                  }
+                  setBulkSeriesStatus('keep');
+                  setBulkEditSeriesModalOpen(true);
+                }}
+              >
+                Editar em massa
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={isBillingBlocked || !canEditContent}
+                onClick={() => {
+                  if (!selectedSeriesIds.length) {
+                    toast.error('Selecione pelo menos 1 série');
+                    return;
+                  }
+                  setBulkDeleteSeriesModalOpen(true);
+                }}
+              >
+                Apagar em massa
+              </Button>
+              <Button variant="outline" size="sm" disabled={selectedSeriesIds.length === 0} onClick={() => setSelectedSeriesIds([])}>
+                Limpar
+              </Button>
+              <Button onClick={openCreateSeries} disabled={isBillingBlocked || !canEditContent}>Nova Série</Button>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="min-w-[260px]">
+                <Input
+                  label="Pesquisar"
+                  value={seriesSearch}
+                  onChange={(e) => setSeriesSearch(e.target.value)}
+                  placeholder="Nome da série..."
+                />
+              </div>
+              <div className="min-w-[240px]">
+                <label className="block text-sm font-medium mb-1 text-zinc-700 dark:text-zinc-300">Categorias</label>
+                <Select
+                  value={seriesBouquetId}
+                  onChange={(e) => {
+                    setSeriesBouquetId(e.target.value);
+                    setSeriesPage(1);
+                    setSelectedSeriesIds([]);
+                  }}
+                >
+                  <option value="">Todas as Categorias</option>
+                  {bouquetsForSeries.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="min-w-[140px]">
+                <label className="block text-sm font-medium mb-1 text-zinc-700 dark:text-zinc-300">Mostrar</label>
+                <Select
+                  value={String(seriesPerPage)}
+                  onChange={(e) => {
+                    setSeriesPerPage(parseInt(e.target.value, 10));
+                    setSeriesPage(1);
+                    setSelectedSeriesIds([]);
+                  }}
+                >
+                  {perPageOptions.map((n) => (
+                    <option key={n} value={String(n)}>{n}</option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 justify-end">
+              <div className="text-sm text-zinc-600 dark:text-zinc-400">
+                Página <span className="font-medium text-zinc-900 dark:text-white">{seriesPagination.page}</span> de{' '}
+                <span className="font-medium text-zinc-900 dark:text-white">{seriesPagination.totalPages}</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={seriesPagination.page <= 1}
+                onClick={() => {
+                  setSeriesPage((p) => Math.max(1, p - 1));
+                  setSelectedSeriesIds([]);
+                }}
+              >
+                Anterior
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={seriesPagination.page >= seriesPagination.totalPages}
+                onClick={() => {
+                  setSeriesPage((p) => p + 1);
+                  setSelectedSeriesIds([]);
+                }}
+              >
+                Próxima
+              </Button>
+            </div>
           </div>
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-zinc-600 dark:text-zinc-400">
+                  <th className="py-2 pr-4 sticky left-0 bg-white/90 dark:bg-zinc-950/90 backdrop-blur z-10">
+                    <input
+                      type="checkbox"
+                      checked={series.length > 0 && series.every((s) => selectedSeriesIds.includes(s.id))}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        if (checked) setSelectedSeriesIds(series.map((s) => s.id));
+                        else setSelectedSeriesIds([]);
+                      }}
+                    />
+                  </th>
                   <th className="py-2 pr-4">Nome</th>
                   <th className="py-2 pr-4">Status</th>
+                  <th className="py-2 pr-4">Capa</th>
                   <th className="py-2 pr-4">Episódios</th>
                   <th className="py-2 pr-4">Categorias</th>
                   <th className="py-2 pr-4"></th>
@@ -4531,9 +5261,36 @@ export function CoreXtreamPage() {
               <tbody>
                 {series.map((s) => (
                   <tr key={s.id} className="border-t border-zinc-200/70 dark:border-zinc-800/70">
+                    <td className="py-3 pr-4 sticky left-0 bg-white/90 dark:bg-zinc-950/90 backdrop-blur z-10">
+                      <input
+                        type="checkbox"
+                        checked={selectedSeriesIds.includes(s.id)}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setSelectedSeriesIds((prev) => {
+                            if (checked) return prev.includes(s.id) ? prev : [...prev, s.id];
+                            return prev.filter((id) => id !== s.id);
+                          });
+                        }}
+                      />
+                    </td>
                     <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-white">{s.name}</td>
                     <td className="py-3 pr-4">
                       <Badge variant={s.isActive ? 'success' : 'warning'}>{s.isActive ? 'ATIVO' : 'INATIVO'}</Badge>
+                    </td>
+                    <td className="py-3 pr-4">
+                      {s.coverUrl ? (
+                        <img
+                          src={getImageUrl(s.coverUrl) || ''}
+                          alt=""
+                          className="w-8 h-8 rounded object-cover bg-white"
+                          onError={(e) => {
+                            (e.currentTarget as any).style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        <div className="w-8 h-8 rounded bg-zinc-100 dark:bg-zinc-800" />
+                      )}
                     </td>
                     <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">{s._count?.episodes ?? '-'}</td>
                     <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">
@@ -4542,11 +5299,11 @@ export function CoreXtreamPage() {
                     <td className="py-3 pr-4">
                       <div className="flex items-center gap-2 justify-end">
                         <Button variant="outline" size="sm" onClick={() => openEpisodes(s.id)}>Episódios</Button>
-                        <Button variant="outline" size="sm" onClick={() => openEditSeries(s)} disabled={isBillingBlocked}>Editar</Button>
+                        <Button variant="outline" size="sm" onClick={() => openEditSeries(s)} disabled={isBillingBlocked || !canEditContent}>Editar</Button>
                         <Button
                           variant="danger"
                           size="sm"
-                          disabled={isBillingBlocked}
+                          disabled={isBillingBlocked || !canEditContent}
                           onClick={() => {
                             if (!confirm('Remover esta série?')) return;
                             deleteSeriesMutation.mutate(s.id);
@@ -4560,7 +5317,7 @@ export function CoreXtreamPage() {
                 ))}
                 {series.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
+                    <td colSpan={7} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
                       Nenhuma série criada ainda
                     </td>
                   </tr>
@@ -4576,14 +5333,14 @@ export function CoreXtreamPage() {
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Streams</h3>
             <div className="flex items-center gap-2">
-              <div className="text-sm text-zinc-600 dark:text-zinc-400">{streams.length} registro(s)</div>
+              <div className="text-sm text-zinc-600 dark:text-zinc-400">{streamsPagination.total} registro(s)</div>
               {selectedStreamIds.length ? (
                 <div className="text-sm text-zinc-600 dark:text-zinc-400">{selectedStreamIds.length} selecionado(s)</div>
               ) : null}
               <Button
                 variant="outline"
                 size="sm"
-                disabled={isBillingBlocked || selectedStreamIds.length === 0 || activeServersCount === 0}
+                disabled={isBillingBlocked || !canEditContent || activeServersCount === 0}
                 onClick={() => {
                   if (activeServersCount === 0) {
                     toast.error('Nenhum servidor ativo cadastrado');
@@ -4599,17 +5356,119 @@ export function CoreXtreamPage() {
               >
                 Aplicar servidores
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isBillingBlocked || !canEditContent}
+                onClick={() => {
+                  if (!selectedStreamIds.length) {
+                    toast.error('Selecione pelo menos 1 stream');
+                    return;
+                  }
+                  setBulkStreamForm({ status: 'keep', catchup: 'keep', catchupDays: '' });
+                  setBulkEditStreamsModalOpen(true);
+                }}
+              >
+                Editar em massa
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={isBillingBlocked || !canEditContent}
+                onClick={() => {
+                  if (!selectedStreamIds.length) {
+                    toast.error('Selecione pelo menos 1 stream');
+                    return;
+                  }
+                  setBulkDeleteStreamsModalOpen(true);
+                }}
+              >
+                Apagar em massa
+              </Button>
               <Button variant="outline" size="sm" disabled={selectedStreamIds.length === 0} onClick={() => setSelectedStreamIds([])}>
                 Limpar
               </Button>
-              <Button onClick={openCreateStream} disabled={isBillingBlocked}>Nova Stream</Button>
+              <Button onClick={openCreateStream} disabled={isBillingBlocked || !canEditContent}>Nova Stream</Button>
+            </div>
+          </div>
+          <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="min-w-[260px]">
+                <Input
+                  label="Pesquisar"
+                  value={streamsSearch}
+                  onChange={(e) => setStreamsSearch(e.target.value)}
+                  placeholder="Nome do canal..."
+                />
+              </div>
+              <div className="min-w-[240px]">
+                <label className="block text-sm font-medium mb-1 text-zinc-700 dark:text-zinc-300">Categorias</label>
+                <Select
+                  value={streamsBouquetId}
+                  onChange={(e) => {
+                    setStreamsBouquetId(e.target.value);
+                    setStreamsPage(1);
+                    setSelectedStreamIds([]);
+                  }}
+                >
+                  <option value="">Todas as Categorias</option>
+                  {bouquetsForStreams.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div className="min-w-[140px]">
+                <label className="block text-sm font-medium mb-1 text-zinc-700 dark:text-zinc-300">Mostrar</label>
+                <Select
+                  value={String(streamsPerPage)}
+                  onChange={(e) => {
+                    setStreamsPerPage(parseInt(e.target.value, 10));
+                    setStreamsPage(1);
+                    setSelectedStreamIds([]);
+                  }}
+                >
+                  {perPageOptions.map((n) => (
+                    <option key={n} value={String(n)}>{n}</option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 justify-end">
+              <div className="text-sm text-zinc-600 dark:text-zinc-400">
+                Página <span className="font-medium text-zinc-900 dark:text-white">{streamsPagination.page}</span> de{' '}
+                <span className="font-medium text-zinc-900 dark:text-white">{streamsPagination.totalPages}</span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={streamsPagination.page <= 1}
+                onClick={() => {
+                  setStreamsPage((p) => Math.max(1, p - 1));
+                  setSelectedStreamIds([]);
+                }}
+              >
+                Anterior
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={streamsPagination.page >= streamsPagination.totalPages}
+                onClick={() => {
+                  setStreamsPage((p) => p + 1);
+                  setSelectedStreamIds([]);
+                }}
+              >
+                Próxima
+              </Button>
             </div>
           </div>
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
                 <tr className="text-left text-zinc-600 dark:text-zinc-400">
-                  <th className="py-2 pr-4">
+                  <th className="py-2 pr-4 sticky left-0 bg-white/90 dark:bg-zinc-950/90 backdrop-blur z-10">
                     <input
                       type="checkbox"
                       checked={streams.length > 0 && streams.every((s) => selectedStreamIds.includes(s.id))}
@@ -4620,6 +5479,7 @@ export function CoreXtreamPage() {
                       }}
                     />
                   </th>
+                  <th className="py-2 pr-4">Logo</th>
                   <th className="py-2 pr-4">Nome</th>
                   <th className="py-2 pr-4">Status</th>
                   <th className="py-2 pr-4">Catchup</th>
@@ -4631,7 +5491,7 @@ export function CoreXtreamPage() {
               <tbody>
                 {streams.map((s) => (
                   <tr key={s.id} className="border-t border-zinc-200/70 dark:border-zinc-800/70">
-                    <td className="py-3 pr-4">
+                    <td className="py-3 pr-4 sticky left-0 bg-white/90 dark:bg-zinc-950/90 backdrop-blur z-10">
                       <input
                         type="checkbox"
                         checked={selectedStreamIds.includes(s.id)}
@@ -4643,6 +5503,20 @@ export function CoreXtreamPage() {
                           });
                         }}
                       />
+                    </td>
+                    <td className="py-3 pr-4">
+                      {s.logoUrl ? (
+                        <img
+                          src={getImageUrl(s.logoUrl) || ''}
+                          alt=""
+                          className="w-7 h-7 rounded object-cover bg-white"
+                          onError={(e) => {
+                            (e.currentTarget as any).style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        <div className="w-7 h-7 rounded bg-zinc-100 dark:bg-zinc-800" />
+                      )}
                     </td>
                     <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-white">{s.name}</td>
                     <td className="py-3 pr-4">
@@ -4677,11 +5551,11 @@ export function CoreXtreamPage() {
                     <td className="py-3 pr-4">
                       <div className="flex items-center gap-2 justify-end">
                         <Button variant="outline" size="sm" onClick={() => openProbeStream(s)} disabled={isBillingBlocked}>Testar URLs</Button>
-                        <Button variant="outline" size="sm" onClick={() => openEditStream(s)} disabled={isBillingBlocked}>Editar</Button>
+                        <Button variant="outline" size="sm" onClick={() => openEditStream(s)} disabled={isBillingBlocked || !canEditContent}>Editar</Button>
                         <Button
                           variant="danger"
                           size="sm"
-                          disabled={isBillingBlocked}
+                          disabled={isBillingBlocked || !canEditContent}
                           onClick={() => {
                             if (!confirm('Remover esta stream?')) return;
                             deleteStreamMutation.mutate(s.id);
@@ -4695,13 +5569,135 @@ export function CoreXtreamPage() {
                 ))}
                 {streams.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
+                    <td colSpan={8} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
                       Nenhuma stream criada ainda
                     </td>
                   </tr>
                 ) : null}
               </tbody>
             </table>
+          </div>
+        </Card>
+      ) : null}
+
+      {tab === 'monitor' ? (
+        <Card>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Monitoramento (Main + Balances)</h3>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  mainMetricsRefetch();
+                  serversStatusRefetch();
+                  serversMetricsRefetch();
+                }}
+                disabled={serversStatusLoading || serversMetricsLoading || mainMetricsLoading}
+              >
+                Refrescar
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setActiveTab('servers')}>
+                Abrir Servidores
+              </Button>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+              <div className="text-xs text-zinc-600 dark:text-zinc-400">MAIN CPU</div>
+              <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">
+                {mainMetricsData?.data?.cpuPercent === null || mainMetricsData?.data?.cpuPercent === undefined
+                  ? '-'
+                  : `${Math.round(mainMetricsData.data.cpuPercent)}%`}
+              </div>
+              <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">RAM: {mainMetricsData?.data?.memPercent === null || mainMetricsData?.data?.memPercent === undefined ? '-' : `${Math.round(mainMetricsData.data.memPercent)}%`}</div>
+            </div>
+            <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+              <div className="text-xs text-zinc-600 dark:text-zinc-400">MAIN CONEXÕES</div>
+              <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{mainMetricsData?.data?.activeConnections ?? '-'}</div>
+              <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">Usuários: {mainMetricsData?.data?.activeUsers ?? '-'}</div>
+            </div>
+            <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+              <div className="text-xs text-zinc-600 dark:text-zinc-400">TOTAL ENTRADAS (BALANCES)</div>
+              <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{formatMbps(totalsByServers.rx)}</div>
+            </div>
+            <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+              <div className="text-xs text-zinc-600 dark:text-zinc-400">SERVIDORES ONLINE</div>
+              <div className="mt-1 text-lg font-semibold text-zinc-900 dark:text-white">{serversOnlineCount}/{serversInstalled.length}</div>
+              <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">OFF: {totalsByServers.flowsOff}</div>
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {servers
+              .filter((s) => s.isActive && !!(s as any).installedAt)
+              .map((s) => {
+                const mt = serverMetricsById[s.id];
+                const rates = serverNetRates[s.id];
+
+                const cpu = mt?.metrics?.cpuPercent;
+                const mem = mt?.metrics?.memPercent;
+                const conns = mt?.metrics?.activeConnections;
+                const users = mt?.metrics?.activeUsers;
+                const flowsOn = mt?.metrics?.flowsOn;
+                const flowsOff = mt?.metrics?.flowsOff;
+
+                const hasOff = typeof flowsOff === 'number' && flowsOff > 0;
+                const warn = !mt?.ok || hasOff || (typeof cpu === 'number' && cpu >= 90) || (typeof mem === 'number' && mem >= 90);
+
+                return (
+                  <div key={s.id} className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-semibold text-zinc-900 dark:text-white truncate">{s.name}</div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={mt ? (mt.ok ? (warn ? 'warning' : 'success') : 'warning') : 'info'}>
+                          {mt ? (mt.ok ? (warn ? 'ATENÇÃO' : 'OK') : 'OFFLINE') : '...'}
+                        </Badge>
+                        <span className="text-xs text-zinc-600 dark:text-zinc-400">{mt?.ok ? `${mt.ms} ms` : '-'}</span>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                      <div className="text-zinc-600 dark:text-zinc-400">CPU</div>
+                      <div className="text-right text-zinc-900 dark:text-white">{cpu === null || cpu === undefined ? '-' : `${Math.round(cpu)}%`}</div>
+                      <div className="text-zinc-600 dark:text-zinc-400">RAM</div>
+                      <div className="text-right text-zinc-900 dark:text-white">{mem === null || mem === undefined ? '-' : `${Math.round(mem)}%`}</div>
+                      <div className="text-zinc-600 dark:text-zinc-400">Conexões</div>
+                      <div className="text-right text-zinc-900 dark:text-white">{conns ?? '-'}</div>
+                      <div className="text-zinc-600 dark:text-zinc-400">Usuários</div>
+                      <div className="text-right text-zinc-900 dark:text-white">{users ?? '-'}</div>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                      <div className="text-zinc-600 dark:text-zinc-400">Entradas</div>
+                      <div className="text-right text-zinc-900 dark:text-white">{formatMbps(rates?.rxMbps)}</div>
+                      <div className="text-zinc-600 dark:text-zinc-400">Saídas</div>
+                      <div className="text-right text-zinc-900 dark:text-white">{formatMbps(rates?.txMbps)}</div>
+                      <div className="text-zinc-600 dark:text-zinc-400">Fluxos ON</div>
+                      <div className="text-right text-zinc-900 dark:text-white">{flowsOn ?? '-'}</div>
+                      <div className="text-zinc-600 dark:text-zinc-400">Fluxos OFF</div>
+                      <div className="text-right text-zinc-900 dark:text-white">{flowsOff ?? '-'}</div>
+                    </div>
+
+                    {isAdmin ? (
+                      <div className="mt-3 flex justify-end">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={isBillingBlocked}
+                          onClick={() => {
+                            if (!confirm('Executar reparo/instalação no balance (NGINX + health)?')) return;
+                            startServerInstallMutation.mutate(s.id);
+                          }}
+                        >
+                          Reparar
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
           </div>
         </Card>
       ) : null}
@@ -4722,7 +5718,7 @@ export function CoreXtreamPage() {
               >
                 Refrescar
               </Button>
-              <Button onClick={openCreateServer} disabled={isBillingBlocked}>Novo Servidor</Button>
+              <Button onClick={openCreateServer} disabled={isBillingBlocked || !canEditContent}>Novo Servidor</Button>
             </div>
           </div>
 
@@ -4844,19 +5840,19 @@ export function CoreXtreamPage() {
                         <div className="flex items-center gap-2 justify-end">
                           {isAdmin ? (
                             <>
-                              <Button variant="outline" size="sm" onClick={() => startServerSshTestMutation.mutate(s.id)} disabled={isBillingBlocked}>
+                              <Button variant="outline" size="sm" onClick={() => startServerSshTestMutation.mutate(s.id)} disabled={isBillingBlocked || !canEditContent}>
                                 Testar SSH
                               </Button>
-                              <Button variant="outline" size="sm" onClick={() => startServerInstallMutation.mutate(s.id)} disabled={isBillingBlocked}>
+                              <Button variant="outline" size="sm" onClick={() => startServerInstallMutation.mutate(s.id)} disabled={isBillingBlocked || !canEditContent}>
                                 Instalar
                               </Button>
                             </>
                           ) : null}
-                          <Button variant="outline" size="sm" onClick={() => openEditServer(s)} disabled={isBillingBlocked}>Editar</Button>
+                          <Button variant="outline" size="sm" onClick={() => openEditServer(s)} disabled={isBillingBlocked || !canEditContent}>Editar</Button>
                           <Button
                             variant="danger"
                             size="sm"
-                            disabled={isBillingBlocked}
+                            disabled={isBillingBlocked || !canEditContent}
                             onClick={() => {
                               if (!confirm('Remover este servidor?')) return;
                               deleteServerMutation.mutate(s.id);
@@ -4886,7 +5882,7 @@ export function CoreXtreamPage() {
         <Card>
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Agendas (Atualização M3U)</h3>
-            <Button onClick={openCreateSchedule} disabled={isBillingBlocked}>Nova Agenda</Button>
+            <Button onClick={openCreateSchedule} disabled={isBillingBlocked || !canEditContent}>Nova Agenda</Button>
           </div>
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-sm">
@@ -4922,17 +5918,17 @@ export function CoreXtreamPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          disabled={isBillingBlocked}
+                          disabled={isBillingBlocked || !canEditContent}
                           onClick={() => toggleScheduleActiveMutation.mutate({ id: s.id, isActive: !s.isActive })}
                         >
                           {s.isActive ? 'Desativar' : 'Ativar'}
                         </Button>
-                        <Button variant="outline" size="sm" onClick={() => runScheduleMutation.mutate(s.id)} disabled={isBillingBlocked}>Rodar agora</Button>
-                        <Button variant="outline" size="sm" onClick={() => openEditSchedule(s)} disabled={isBillingBlocked}>Editar</Button>
+                        <Button variant="outline" size="sm" onClick={() => runScheduleMutation.mutate(s.id)} disabled={isBillingBlocked || !canEditContent}>Rodar agora</Button>
+                        <Button variant="outline" size="sm" onClick={() => openEditSchedule(s)} disabled={isBillingBlocked || !canEditContent}>Editar</Button>
                         <Button
                           variant="danger"
                           size="sm"
-                          disabled={isBillingBlocked}
+                          disabled={isBillingBlocked || !canEditContent}
                           onClick={() => {
                             if (!confirm('Remover esta agenda?')) return;
                             deleteScheduleMutation.mutate(s.id);
@@ -4962,10 +5958,10 @@ export function CoreXtreamPage() {
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">EPG (XMLTV)</h3>
             <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={() => runEpgAutoMapMutation.mutate()} disabled={isBillingBlocked}>
+              <Button variant="outline" onClick={() => runEpgAutoMapMutation.mutate()} disabled={isBillingBlocked || !canEditContent}>
                 Auto-mapear Streams
               </Button>
-              <Button onClick={openCreateEpg} disabled={isBillingBlocked}>Nova Fonte</Button>
+              <Button onClick={openCreateEpg} disabled={isBillingBlocked || !canEditContent}>Nova Fonte</Button>
             </div>
           </div>
           <div className="mt-4 overflow-x-auto">
@@ -4994,6 +5990,7 @@ export function CoreXtreamPage() {
                       <div className="flex flex-col">
                         <span>{s.lastRunAt ? new Date(s.lastRunAt).toLocaleString('pt-BR') : '-'}</span>
                         <span className="text-xs text-zinc-600 dark:text-zinc-400">{s.lastStatus || ''}</span>
+                        {s.lastMessage ? <span className="text-xs text-zinc-600 dark:text-zinc-400 truncate max-w-[280px]" title={s.lastMessage}>{s.lastMessage}</span> : null}
                       </div>
                     </td>
                     <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300 max-w-xs truncate" title={s.xmltvUrl}>
@@ -5004,17 +6001,17 @@ export function CoreXtreamPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          disabled={isBillingBlocked}
+                          disabled={isBillingBlocked || !canEditContent}
                           onClick={() => toggleEpgSourceActiveMutation.mutate({ id: s.id, isActive: !s.isActive })}
                         >
                           {s.isActive ? 'Desativar' : 'Ativar'}
                         </Button>
-                        <Button variant="outline" size="sm" onClick={() => runEpgSourceMutation.mutate(s.id)} disabled={isBillingBlocked}>Rodar agora</Button>
-                        <Button variant="outline" size="sm" onClick={() => openEditEpg(s)} disabled={isBillingBlocked}>Editar</Button>
+                        <Button variant="outline" size="sm" onClick={() => runEpgSourceMutation.mutate(s.id)} disabled={isBillingBlocked || !canEditContent}>Rodar agora</Button>
+                        <Button variant="outline" size="sm" onClick={() => openEditEpg(s)} disabled={isBillingBlocked || !canEditContent}>Editar</Button>
                         <Button
                           variant="danger"
                           size="sm"
-                          disabled={isBillingBlocked}
+                          disabled={isBillingBlocked || !canEditContent}
                           onClick={() => {
                             if (!confirm('Remover esta fonte EPG?')) return;
                             deleteEpgSourceMutation.mutate(s.id);
@@ -5675,7 +6672,7 @@ export function CoreXtreamPage() {
               <option value="live">Live</option>
               <option value="movie">Filmes</option>
               <option value="series">Séries</option>
-              <option value="vod">VOD (filme+série)</option>
+              <option value="vod">Filmes + Séries</option>
             </Select>
             <Select
               label="Modo"
@@ -5706,7 +6703,7 @@ export function CoreXtreamPage() {
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setScheduleModalOpen(false)}>Cancelar</Button>
             <Button
-              disabled={isBillingBlocked}
+              disabled={isBillingBlocked || !canEditContent}
               onClick={() => {
                 if (!scheduleForm.name || !scheduleForm.m3uUrl || !scheduleForm.cronExpression) {
                   toast.error('Preencha nome, URL e cron');
@@ -5738,13 +6735,19 @@ export function CoreXtreamPage() {
             <Select
               label="Tipo"
               value={importForm.type}
-              onChange={(e) => setImportForm((p) => ({ ...p, type: e.target.value as any }))}
+              onChange={(e) => {
+                setImportForm((p) => ({ ...p, type: e.target.value as any }));
+                setM3uPreview(null);
+                setM3uPreviewSelectedKeys([]);
+                setM3uPreviewSearch('');
+                setExcludeAdultCategories(true);
+              }}
             >
               <option value="all">Tudo</option>
               <option value="live">Live</option>
               <option value="movie">Filmes</option>
               <option value="series">Séries</option>
-              <option value="vod">VOD (filme+série)</option>
+              <option value="vod">Filmes + Séries</option>
             </Select>
             <Select
               label="Modo"
@@ -5814,16 +6817,167 @@ export function CoreXtreamPage() {
               checked={importForm.enrichWithTMDB}
               onChange={(e) => setImportForm((p) => ({ ...p, enrichWithTMDB: e.target.checked }))}
             />
-            <span className="text-sm text-zinc-800 dark:text-zinc-200">Usar TMDB para capas (VOD e Séries)</span>
+            <span className="text-sm text-zinc-800 dark:text-zinc-200">Usar TMDB para capas (Filmes e Séries)</span>
           </label>
+
+          <div className="rounded-lg border border-zinc-200/60 dark:border-zinc-800 p-3 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Prévia</div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={isBillingBlocked || !canEditContent || !importForm.url || previewM3UMutation.isPending}
+                  onClick={() => {
+                    if (!importForm.url) {
+                      toast.error('Preencha a URL');
+                      return;
+                    }
+                    previewM3UMutation.mutate();
+                  }}
+                >
+                  Gerar prévia
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!m3uPreview}
+                  onClick={() => {
+                    if (!m3uPreview) return;
+                    const blob = new Blob([JSON.stringify({ ...m3uPreview, selected: m3uPreviewSelectedKeys }, null, 2)], {
+                      type: 'application/json;charset=utf-8',
+                    });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = `m3u-preview-${Date.now()}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    setTimeout(() => URL.revokeObjectURL(a.href), 500);
+                  }}
+                >
+                  Baixar JSON
+                </Button>
+              </div>
+            </div>
+
+            {m3uPreview ? (
+              <div className="space-y-3">
+                <div className="text-xs text-zinc-600 dark:text-zinc-400">
+                  Itens: {m3uPreview.stats.total} (Live {m3uPreview.stats.live} • Filmes {m3uPreview.stats.movies} • Séries {m3uPreview.stats.series})
+                </div>
+
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={excludeAdultCategories}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      setExcludeAdultCategories(next);
+                      if (next) {
+                        setM3uPreviewSelectedKeys((prev) => {
+                          const adultKeys = new Set((m3uPreview.categories || []).filter((c) => c.isAdult).map((c) => c.key));
+                          return prev.filter((k) => !adultKeys.has(k));
+                        });
+                      }
+                    }}
+                  />
+                  <span className="text-sm text-zinc-800 dark:text-zinc-200">Excluir categorias adulto (XXX/Adultos)</span>
+                </label>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <Input
+                    label="Filtrar categorias"
+                    value={m3uPreviewSearch}
+                    onChange={(e) => setM3uPreviewSearch(e.target.value)}
+                  />
+                  <div className="flex items-end justify-end gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const list = excludeAdultCategories
+                          ? (m3uPreview.categories || []).filter((c) => !c.isAdult)
+                          : (m3uPreview.categories || []);
+                        setM3uPreviewSelectedKeys(list.map((c) => c.key));
+                      }}
+                    >
+                      Selecionar tudo
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setM3uPreviewSelectedKeys([])}
+                    >
+                      Limpar
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={excludeAdultCategories}
+                      onClick={() => setM3uPreviewSelectedKeys((m3uPreview.categories || []).filter((c) => c.isAdult).map((c) => c.key))}
+                    >
+                      Só adulto
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="max-h-56 overflow-auto rounded border border-zinc-200/60 dark:border-zinc-800">
+                  <div className="divide-y divide-zinc-200/60 dark:divide-zinc-800">
+                    {(m3uPreview.categories || [])
+                      .filter((c) => {
+                        const q = (m3uPreviewSearch || '').trim().toLowerCase();
+                        if (!q) return true;
+                        return `${c.kind} ${c.name}`.toLowerCase().includes(q);
+                      })
+                      .map((c) => {
+                        const checked = m3uPreviewSelectedKeys.includes(c.key);
+                        const disabled = excludeAdultCategories && c.isAdult;
+                        return (
+                          <label
+                            key={c.key}
+                            className={`flex items-center gap-2 px-3 py-2 ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={disabled}
+                              onChange={(e) => {
+                                const next = e.target.checked;
+                                setM3uPreviewSelectedKeys((prev) => {
+                                  if (next) return prev.includes(c.key) ? prev : [...prev, c.key];
+                                  return prev.filter((k) => k !== c.key);
+                                });
+                              }}
+                            />
+                            <div className="flex-1 text-sm text-zinc-800 dark:text-zinc-200 truncate">
+                              {c.kind} • {c.name}
+                            </div>
+                            <div className="text-xs text-zinc-500 dark:text-zinc-400">{c.count}</div>
+                          </label>
+                        );
+                      })}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                Gere a prévia para ver as categorias e marcar o que importar/atualizar.
+              </div>
+            )}
+          </div>
 
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setImportModalOpen(false)}>Cancelar</Button>
             <Button
-              disabled={isBillingBlocked}
+              disabled={isBillingBlocked || !canEditContent}
               onClick={() => {
                 if (!importForm.url) {
                   toast.error('Preencha a URL');
+                  return;
+                }
+                if (m3uPreview && m3uPreviewSelectedKeys.length === 0) {
+                  toast.error('Selecione pelo menos 1 categoria para importar');
                   return;
                 }
                 if (importForm.mode === 'replace') {
@@ -5843,8 +6997,11 @@ export function CoreXtreamPage() {
 
       <Modal
         isOpen={vodModalOpen}
-        onClose={() => setVodModalOpen(false)}
-        title={editingVod ? 'Editar VOD' : 'Novo VOD'}
+        onClose={() => {
+          setVodModalOpen(false);
+          setVodPosterFile(null);
+        }}
+        title={editingVod ? 'Editar Filme' : 'Novo Filme'}
         size="lg"
       >
         <div className="space-y-4">
@@ -5863,6 +7020,53 @@ export function CoreXtreamPage() {
             value={vodForm.posterUrl}
             onChange={(e) => setVodForm((p) => ({ ...p, posterUrl: e.target.value }))}
           />
+          {vodForm.posterUrl ? (
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                {getImageUrl(vodForm.posterUrl) ? (
+                  <img
+                    src={getImageUrl(vodForm.posterUrl) || ''}
+                    alt=""
+                    className="w-10 h-10 rounded object-cover bg-white"
+                    onError={(e) => {
+                      (e.currentTarget as any).style.display = 'none';
+                    }}
+                  />
+                ) : null}
+                <div className="text-xs text-zinc-600 dark:text-zinc-400 truncate max-w-[360px]">{vodForm.posterUrl}</div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => window.open(getImageUrl(vodForm.posterUrl) || vodForm.posterUrl, '_blank', 'noopener,noreferrer')}
+              >
+                Abrir
+              </Button>
+            </div>
+          ) : null}
+          {editingVod ? (
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Enviar capa do filme</div>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setVodPosterFile(e.target.files?.[0] || null)}
+              />
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={isBillingBlocked || !vodPosterFile || uploadVodPosterMutation.isPending}
+                  onClick={() => {
+                    if (!editingVod || !vodPosterFile) return;
+                    uploadVodPosterMutation.mutate({ vodId: editingVod.id, file: vodPosterFile });
+                  }}
+                >
+                  Enviar capa
+                </Button>
+              </div>
+            </div>
+          ) : null}
           <Select
             label="Status"
             value={vodForm.isActive ? 'true' : 'false'}
@@ -5903,9 +7107,17 @@ export function CoreXtreamPage() {
           </div>
 
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setVodModalOpen(false)}>Cancelar</Button>
             <Button
-              disabled={isBillingBlocked}
+              variant="outline"
+              onClick={() => {
+                setVodModalOpen(false);
+                setVodPosterFile(null);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              disabled={isBillingBlocked || !canEditContent}
               onClick={() => {
                 if (!vodForm.name || !vodForm.streamUrl) {
                   toast.error('Preencha nome e URL');
@@ -5923,7 +7135,10 @@ export function CoreXtreamPage() {
 
       <Modal
         isOpen={seriesModalOpen}
-        onClose={() => setSeriesModalOpen(false)}
+        onClose={() => {
+          setSeriesModalOpen(false);
+          setSeriesCoverFile(null);
+        }}
         title={editingSeries ? 'Editar Série' : 'Nova Série'}
         size="lg"
       >
@@ -5938,6 +7153,53 @@ export function CoreXtreamPage() {
             value={seriesForm.coverUrl}
             onChange={(e) => setSeriesForm((p) => ({ ...p, coverUrl: e.target.value }))}
           />
+          {seriesForm.coverUrl ? (
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                {getImageUrl(seriesForm.coverUrl) ? (
+                  <img
+                    src={getImageUrl(seriesForm.coverUrl) || ''}
+                    alt=""
+                    className="w-10 h-10 rounded object-cover bg-white"
+                    onError={(e) => {
+                      (e.currentTarget as any).style.display = 'none';
+                    }}
+                  />
+                ) : null}
+                <div className="text-xs text-zinc-600 dark:text-zinc-400 truncate max-w-[360px]">{seriesForm.coverUrl}</div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => window.open(getImageUrl(seriesForm.coverUrl) || seriesForm.coverUrl, '_blank', 'noopener,noreferrer')}
+              >
+                Abrir
+              </Button>
+            </div>
+          ) : null}
+          {editingSeries ? (
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Enviar capa da série</div>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setSeriesCoverFile(e.target.files?.[0] || null)}
+              />
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={isBillingBlocked || !seriesCoverFile || uploadSeriesCoverMutation.isPending}
+                  onClick={() => {
+                    if (!editingSeries || !seriesCoverFile) return;
+                    uploadSeriesCoverMutation.mutate({ seriesId: editingSeries.id, file: seriesCoverFile });
+                  }}
+                >
+                  Enviar capa
+                </Button>
+              </div>
+            </div>
+          ) : null}
           <Select
             label="Status"
             value={seriesForm.isActive ? 'true' : 'false'}
@@ -5978,9 +7240,17 @@ export function CoreXtreamPage() {
           </div>
 
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setSeriesModalOpen(false)}>Cancelar</Button>
             <Button
-              disabled={isBillingBlocked}
+              variant="outline"
+              onClick={() => {
+                setSeriesModalOpen(false);
+                setSeriesCoverFile(null);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              disabled={isBillingBlocked || !canEditContent}
               onClick={() => {
                 if (!seriesForm.name) {
                   toast.error('Preencha o nome');
@@ -6044,9 +7314,9 @@ export function CoreXtreamPage() {
           </Select>
 
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={openCreateEpisode} disabled={isBillingBlocked}>Novo</Button>
+            <Button variant="outline" onClick={openCreateEpisode} disabled={isBillingBlocked || !canEditContent}>Novo</Button>
             <Button
-              disabled={isBillingBlocked}
+              disabled={isBillingBlocked || !canEditContent}
               onClick={() => {
                 if (!episodeForm.title || !episodeForm.streamUrl) {
                   toast.error('Preencha título e URL');
@@ -6092,11 +7362,11 @@ export function CoreXtreamPage() {
                         </td>
                         <td className="py-3 pr-4">
                           <div className="flex items-center gap-2 justify-end">
-                            <Button variant="outline" size="sm" onClick={() => openEditEpisode(e)} disabled={isBillingBlocked}>Editar</Button>
+                            <Button variant="outline" size="sm" onClick={() => openEditEpisode(e)} disabled={isBillingBlocked || !canEditContent}>Editar</Button>
                             <Button
                               variant="danger"
                               size="sm"
-                              disabled={isBillingBlocked}
+                              disabled={isBillingBlocked || !canEditContent}
                               onClick={() => {
                                 if (!confirm('Remover este episódio?')) return;
                                 deleteEpisodeMutation.mutate(e.id);
@@ -6163,7 +7433,7 @@ export function CoreXtreamPage() {
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setEpgModalOpen(false)}>Cancelar</Button>
             <Button
-              disabled={isBillingBlocked}
+              disabled={isBillingBlocked || !canEditContent}
               onClick={() => {
                 if (!epgForm.name || !epgForm.xmltvUrl || !epgForm.cronExpression) {
                   toast.error('Preencha nome, URL e cron');
@@ -6436,7 +7706,7 @@ export function CoreXtreamPage() {
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setServerModalOpen(false)}>Cancelar</Button>
             <Button
-              disabled={isBillingBlocked}
+              disabled={isBillingBlocked || !canEditContent}
               onClick={() => {
                 if (!serverForm.name.trim()) {
                   toast.error('Preencha o nome');
@@ -6495,7 +7765,10 @@ export function CoreXtreamPage() {
 
       <Modal
         isOpen={streamModalOpen}
-        onClose={() => setStreamModalOpen(false)}
+        onClose={() => {
+          setStreamModalOpen(false);
+          setStreamLogoFile(null);
+        }}
         title={editingStream ? 'Editar Stream' : 'Nova Stream'}
         size="lg"
       >
@@ -6539,6 +7812,53 @@ export function CoreXtreamPage() {
             value={streamForm.logoUrl}
             onChange={(e) => setStreamForm((p) => ({ ...p, logoUrl: e.target.value }))}
           />
+          {streamForm.logoUrl ? (
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                {getImageUrl(streamForm.logoUrl) ? (
+                  <img
+                    src={getImageUrl(streamForm.logoUrl) || ''}
+                    alt=""
+                    className="w-10 h-10 rounded object-cover bg-white"
+                    onError={(e) => {
+                      (e.currentTarget as any).style.display = 'none';
+                    }}
+                  />
+                ) : null}
+                <div className="text-xs text-zinc-600 dark:text-zinc-400 truncate max-w-[360px]">{streamForm.logoUrl}</div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => window.open(getImageUrl(streamForm.logoUrl) || streamForm.logoUrl, '_blank', 'noopener,noreferrer')}
+              >
+                Abrir
+              </Button>
+            </div>
+          ) : null}
+          {editingStream ? (
+            <div className="space-y-2">
+              <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Enviar logo do canal</div>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => setStreamLogoFile(e.target.files?.[0] || null)}
+              />
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={isBillingBlocked || !streamLogoFile || uploadStreamLogoMutation.isPending}
+                  onClick={() => {
+                    if (!editingStream || !streamLogoFile) return;
+                    uploadStreamLogoMutation.mutate({ streamId: editingStream.id, file: streamLogoFile });
+                  }}
+                >
+                  Enviar logo
+                </Button>
+              </div>
+            </div>
+          ) : null}
           <Select
             label="Canal EPG (opcional)"
             value={streamForm.epgChannelId || ''}
@@ -6652,7 +7972,7 @@ export function CoreXtreamPage() {
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setStreamModalOpen(false)}>Cancelar</Button>
             <Button
-              disabled={isBillingBlocked}
+              disabled={isBillingBlocked || !canEditContent}
               onClick={() => {
                 const urls = (streamForm.streamUrl || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
                 if (!streamForm.name || urls.length === 0) {
@@ -6826,6 +8146,304 @@ export function CoreXtreamPage() {
       </Modal>
 
       <Modal
+        isOpen={bulkEditStreamsModalOpen}
+        onClose={() => setBulkEditStreamsModalOpen(false)}
+        title="Editar Streams em Massa"
+        size="lg"
+      >
+        <div className="space-y-4">
+          <div className="text-sm text-zinc-600 dark:text-zinc-400">
+            Selecionadas: <span className="font-medium text-zinc-900 dark:text-white">{selectedStreamIds.length}</span>
+          </div>
+          <Select
+            label="Status"
+            value={bulkStreamForm.status}
+            onChange={(e) => setBulkStreamForm((p) => ({ ...p, status: e.target.value as any }))}
+          >
+            <option value="keep">Não alterar</option>
+            <option value="active">Ativar</option>
+            <option value="inactive">Desativar</option>
+          </Select>
+          <Select
+            label="Catchup"
+            value={bulkStreamForm.catchup}
+            onChange={(e) => setBulkStreamForm((p) => ({ ...p, catchup: e.target.value as any }))}
+          >
+            <option value="keep">Não alterar</option>
+            <option value="on">Ativar</option>
+            <option value="off">Desativar</option>
+          </Select>
+          <Input
+            label="Dias de Catchup"
+            type="number"
+            value={bulkStreamForm.catchupDays}
+            onChange={(e) => setBulkStreamForm((p) => ({ ...p, catchupDays: e.target.value }))}
+          />
+          <Select
+            label="Mover para categoria"
+            value={bulkStreamForm.moveToBouquetId}
+            onChange={(e) => setBulkStreamForm((p) => ({ ...p, moveToBouquetId: e.target.value }))}
+          >
+            <option value="">Não mover</option>
+            {bouquetsForStreams.map((b) => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
+          </Select>
+          <Select
+            label="Garantir categoria no pacote"
+            value={bulkStreamForm.ensureInPackageId}
+            onChange={(e) => setBulkStreamForm((p) => ({ ...p, ensureInPackageId: e.target.value }))}
+          >
+            <option value="">Não mexer</option>
+            {packages.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </Select>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setBulkEditStreamsModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              disabled={isBillingBlocked || bulkUpdateStreamsMutation.isPending || selectedStreamIds.length === 0}
+              loading={bulkUpdateStreamsMutation.isPending}
+              onClick={() => {
+                const payload: any = { streamIds: selectedStreamIds };
+                if (bulkStreamForm.status === 'active') payload.isActive = true;
+                if (bulkStreamForm.status === 'inactive') payload.isActive = false;
+                if (bulkStreamForm.catchup === 'on') payload.tvArchive = true;
+                if (bulkStreamForm.catchup === 'off') payload.tvArchive = false;
+
+                if (bulkStreamForm.catchup === 'on') {
+                  const days = parseInt(String(bulkStreamForm.catchupDays || '').trim() || '0', 10);
+                  if (Number.isFinite(days) && days >= 0) payload.tvArchiveDuration = days;
+                }
+                if (bulkStreamForm.catchup === 'off') {
+                  payload.tvArchiveDuration = 0;
+                }
+
+                if (bulkStreamForm.moveToBouquetId) payload.moveToBouquetId = bulkStreamForm.moveToBouquetId;
+                if (bulkStreamForm.ensureInPackageId) payload.ensureInPackageId = bulkStreamForm.ensureInPackageId;
+
+                if (
+                  payload.isActive === undefined &&
+                  payload.tvArchive === undefined &&
+                  payload.tvArchiveDuration === undefined &&
+                  payload.moveToBouquetId === undefined &&
+                  payload.ensureInPackageId === undefined
+                ) {
+                  toast.error('Selecione pelo menos 1 campo para alterar');
+                  return;
+                }
+                bulkUpdateStreamsMutation.mutate(payload);
+              }}
+            >
+              Aplicar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={bulkDeleteStreamsModalOpen}
+        onClose={() => setBulkDeleteStreamsModalOpen(false)}
+        title="Apagar Streams em Massa"
+        size="lg"
+      >
+        <div className="space-y-4">
+          <div className="text-sm text-zinc-600 dark:text-zinc-400">
+            Remover <span className="font-medium text-zinc-900 dark:text-white">{selectedStreamIds.length}</span> stream(s).
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setBulkDeleteStreamsModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="danger"
+              disabled={isBillingBlocked || bulkDeleteStreamsMutation.isPending || selectedStreamIds.length === 0}
+              loading={bulkDeleteStreamsMutation.isPending}
+              onClick={() => bulkDeleteStreamsMutation.mutate({ streamIds: selectedStreamIds })}
+            >
+              Apagar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={bulkEditVodModalOpen}
+        onClose={() => setBulkEditVodModalOpen(false)}
+        title="Editar Filmes em Massa"
+        size="lg"
+      >
+        <div className="space-y-4">
+          <div className="text-sm text-zinc-600 dark:text-zinc-400">
+            Selecionados: <span className="font-medium text-zinc-900 dark:text-white">{selectedVodIds.length}</span>
+          </div>
+          <Select label="Status" value={bulkVodStatus} onChange={(e) => setBulkVodStatus(e.target.value as any)}>
+            <option value="keep">Não alterar</option>
+            <option value="active">Ativar</option>
+            <option value="inactive">Desativar</option>
+          </Select>
+          <Select
+            label="Mover para categoria"
+            value={bulkVodMoveToBouquetId}
+            onChange={(e) => setBulkVodMoveToBouquetId(e.target.value)}
+          >
+            <option value="">Não mover</option>
+            {bouquetsForVod.map((b) => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
+          </Select>
+          <Select
+            label="Garantir categoria no pacote"
+            value={bulkVodEnsureInPackageId}
+            onChange={(e) => setBulkVodEnsureInPackageId(e.target.value)}
+          >
+            <option value="">Não mexer</option>
+            {packages.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </Select>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setBulkEditVodModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              disabled={isBillingBlocked || bulkUpdateVodMutation.isPending || selectedVodIds.length === 0}
+              loading={bulkUpdateVodMutation.isPending}
+              onClick={() => {
+                const payload: any = { vodIds: selectedVodIds };
+                if (bulkVodStatus === 'active') payload.isActive = true;
+                if (bulkVodStatus === 'inactive') payload.isActive = false;
+                if (bulkVodMoveToBouquetId) payload.moveToBouquetId = bulkVodMoveToBouquetId;
+                if (bulkVodEnsureInPackageId) payload.ensureInPackageId = bulkVodEnsureInPackageId;
+                if (payload.isActive === undefined && payload.moveToBouquetId === undefined && payload.ensureInPackageId === undefined) {
+                  toast.error('Selecione pelo menos 1 campo para alterar');
+                  return;
+                }
+                bulkUpdateVodMutation.mutate(payload);
+              }}
+            >
+              Aplicar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={bulkDeleteVodModalOpen}
+        onClose={() => setBulkDeleteVodModalOpen(false)}
+        title="Apagar Filmes em Massa"
+        size="lg"
+      >
+        <div className="space-y-4">
+          <div className="text-sm text-zinc-600 dark:text-zinc-400">
+            Remover <span className="font-medium text-zinc-900 dark:text-white">{selectedVodIds.length}</span> filme(s).
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setBulkDeleteVodModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="danger"
+              disabled={isBillingBlocked || bulkDeleteVodMutation.isPending || selectedVodIds.length === 0}
+              loading={bulkDeleteVodMutation.isPending}
+              onClick={() => bulkDeleteVodMutation.mutate({ vodIds: selectedVodIds })}
+            >
+              Apagar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={bulkEditSeriesModalOpen}
+        onClose={() => setBulkEditSeriesModalOpen(false)}
+        title="Editar Séries em Massa"
+        size="lg"
+      >
+        <div className="space-y-4">
+          <div className="text-sm text-zinc-600 dark:text-zinc-400">
+            Selecionadas: <span className="font-medium text-zinc-900 dark:text-white">{selectedSeriesIds.length}</span>
+          </div>
+          <Select label="Status" value={bulkSeriesStatus} onChange={(e) => setBulkSeriesStatus(e.target.value as any)}>
+            <option value="keep">Não alterar</option>
+            <option value="active">Ativar</option>
+            <option value="inactive">Desativar</option>
+          </Select>
+          <Select
+            label="Mover para categoria"
+            value={bulkSeriesMoveToBouquetId}
+            onChange={(e) => setBulkSeriesMoveToBouquetId(e.target.value)}
+          >
+            <option value="">Não mover</option>
+            {bouquetsForSeries.map((b) => (
+              <option key={b.id} value={b.id}>{b.name}</option>
+            ))}
+          </Select>
+          <Select
+            label="Garantir categoria no pacote"
+            value={bulkSeriesEnsureInPackageId}
+            onChange={(e) => setBulkSeriesEnsureInPackageId(e.target.value)}
+          >
+            <option value="">Não mexer</option>
+            {packages.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </Select>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setBulkEditSeriesModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              disabled={isBillingBlocked || bulkUpdateSeriesMutation.isPending || selectedSeriesIds.length === 0}
+              loading={bulkUpdateSeriesMutation.isPending}
+              onClick={() => {
+                const payload: any = { seriesIds: selectedSeriesIds };
+                if (bulkSeriesStatus === 'active') payload.isActive = true;
+                if (bulkSeriesStatus === 'inactive') payload.isActive = false;
+                if (bulkSeriesMoveToBouquetId) payload.moveToBouquetId = bulkSeriesMoveToBouquetId;
+                if (bulkSeriesEnsureInPackageId) payload.ensureInPackageId = bulkSeriesEnsureInPackageId;
+                if (payload.isActive === undefined && payload.moveToBouquetId === undefined && payload.ensureInPackageId === undefined) {
+                  toast.error('Selecione pelo menos 1 campo para alterar');
+                  return;
+                }
+                bulkUpdateSeriesMutation.mutate(payload);
+              }}
+            >
+              Aplicar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={bulkDeleteSeriesModalOpen}
+        onClose={() => setBulkDeleteSeriesModalOpen(false)}
+        title="Apagar Séries em Massa"
+        size="lg"
+      >
+        <div className="space-y-4">
+          <div className="text-sm text-zinc-600 dark:text-zinc-400">
+            Remover <span className="font-medium text-zinc-900 dark:text-white">{selectedSeriesIds.length}</span> série(s).
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setBulkDeleteSeriesModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="danger"
+              disabled={isBillingBlocked || bulkDeleteSeriesMutation.isPending || selectedSeriesIds.length === 0}
+              loading={bulkDeleteSeriesMutation.isPending}
+              onClick={() => bulkDeleteSeriesMutation.mutate({ seriesIds: selectedSeriesIds })}
+            >
+              Apagar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
         isOpen={bouquetModalOpen}
         onClose={() => setBouquetModalOpen(false)}
         title={editingBouquet ? 'Editar Categoria' : 'Nova Categoria'}
@@ -6879,7 +8497,7 @@ export function CoreXtreamPage() {
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setBouquetModalOpen(false)}>Cancelar</Button>
             <Button
-              disabled={isBillingBlocked}
+              disabled={isBillingBlocked || !canEditContent}
               onClick={() => {
                 if (!bouquetForm.name) {
                   toast.error('Preencha o nome');
@@ -6969,7 +8587,7 @@ export function CoreXtreamPage() {
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setPackageModalOpen(false)}>Cancelar</Button>
             <Button
-              disabled={isBillingBlocked}
+              disabled={isBillingBlocked || !canEditContent}
               onClick={() => {
                 if (!packageForm.name) {
                   toast.error('Preencha o nome');

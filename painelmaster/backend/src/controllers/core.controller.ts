@@ -7,6 +7,8 @@ import zlib from 'node:zlib';
 import axios from 'axios';
 import ssh2Pkg from 'ssh2';
 import https from 'node:https';
+import path from 'path';
+import fs from 'fs/promises';
 import { prisma } from '../config/database.js';
 import env from '../config/env.js';
 import { asyncHandler, AppError } from '../middleware/error.middleware.js';
@@ -35,6 +37,54 @@ type CoreEdgeJob = {
 
 const coreEdgeJobs = new Map<string, CoreEdgeJob>();
 const coreEdgeJobConnections = new Map<string, any>();
+
+let mainMetricsLastCpuSample: { idle: number; total: number } | null = null;
+const readMainCpuSample = async () => {
+  const text = await fs.readFile('/proc/stat', 'utf8');
+  const first = text.split('\n')[0] || '';
+  const cols = first.trim().split(/\s+/);
+  if (cols[0] !== 'cpu') return null;
+  const nums = cols.slice(1).map((x) => parseInt(x, 10)).filter((n) => Number.isFinite(n));
+  if (nums.length < 4) return null;
+  const idle = (nums[3] || 0) + (nums[4] || 0);
+  const total = nums.reduce((a, b) => a + b, 0);
+  return { idle, total };
+};
+
+const readMainMemPercent = async () => {
+  const text = await fs.readFile('/proc/meminfo', 'utf8');
+  const lines = text.split('\n');
+  const getKb = (key: string) => {
+    const line = lines.find((l) => l.startsWith(key));
+    if (!line) return null;
+    const m = line.match(/(\d+)/);
+    return m ? parseInt(m[1], 10) : null;
+  };
+  const total = getKb('MemTotal:');
+  const avail = getKb('MemAvailable:');
+  if (!total || !avail) return null;
+  const used = Math.max(0, total - avail);
+  return Math.max(0, Math.min(100, (used / total) * 100));
+};
+
+const readMainNetBytes = async () => {
+  const text = await fs.readFile('/proc/net/dev', 'utf8');
+  const lines = text.split('\n').slice(2).map((l) => l.trim()).filter(Boolean);
+  let rx = 0n;
+  let tx = 0n;
+  for (const l of lines) {
+    const [ifacePart, rest] = l.split(':');
+    const iface = (ifacePart || '').trim();
+    if (!iface || iface === 'lo') continue;
+    const cols = (rest || '').trim().split(/\s+/);
+    if (cols.length < 16) continue;
+    const rxBytes = BigInt(cols[0] || '0');
+    const txBytes = BigInt(cols[8] || '0');
+    rx += rxBytes;
+    tx += txBytes;
+  }
+  return { rxBytes: rx.toString(), txBytes: tx.toString() };
+};
 
 function addCoreEdgeJobLog(jobId: string, message: string) {
   const job = coreEdgeJobs.get(jobId);
@@ -174,9 +224,15 @@ const edgeServerSchema = z.object({
 });
 
 const bouquetSchema = z.object({
+  kind: z.enum(['LIVE', 'MOVIE', 'SERIES']).optional(),
   name: z.string().min(1),
   isActive: z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true' || v === undefined).optional(),
+  sortOrder: z.union([z.number(), z.string()]).transform(v => toInt(v, 0)).optional(),
   streamIds: z.array(z.string().uuid()).optional(),
+});
+
+const resetCoreSchema = z.object({
+  confirm: z.literal('ZERAR_TUDO'),
 });
 
 const packageSchema = z.object({
@@ -238,6 +294,7 @@ const importM3USchema = z.object({
     ),
   mode: z.enum(['append', 'replace', 'update']).optional(),
   type: z.enum(['all', 'live', 'movie', 'series', 'vod']).optional(),
+  includeCategories: z.array(z.string().min(1)).optional(),
   createPackage: z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true').optional(),
   packageName: z.string().min(1).optional(),
   createLine: z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true').optional(),
@@ -246,6 +303,26 @@ const importM3USchema = z.object({
   lineExpiresDays: z.union([z.number(), z.string()]).transform(v => toInt(v, 30)).optional(),
   background: z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true').optional(),
   enrichWithTMDB: z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true').optional(),
+});
+
+const previewM3USchema = z.object({
+  url: z
+    .string()
+    .min(1)
+    .transform(normalizeM3UUrlInput)
+    .refine(
+      (v) => {
+        try {
+          new URL(v);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      { message: 'URL do M3U inválida. Se a senha tiver "?" use %3F (ex: password=abc%3F123).' },
+    ),
+  type: z.enum(['all', 'live', 'movie', 'series', 'vod']).optional(),
+  sampleLimit: z.union([z.number(), z.string()]).transform(v => toInt(v, 25)).optional(),
 });
 
 const m3uScheduleSchema = z.object({
@@ -484,6 +561,7 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
     url,
     mode = 'append',
     type = 'all',
+    includeCategories,
     createPackage = false,
     packageName,
     createLine = false,
@@ -505,13 +583,27 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
   } catch {}
   const parsed = await parser.parseFromUrl(url, 120000);
 
+  const kindByItemType = (t: string) => {
+    if (t === 'live') return 'LIVE';
+    if (t === 'movie') return 'MOVIE';
+    return 'SERIES';
+  };
+  const normGroup = (g: any) => (String(g || 'Sem categoria').trim() || 'Sem categoria');
+  const bouquetKey = (kind: string, name: string) => `${kind}::${name}`;
+  const includeKeys = includeCategories?.length ? new Set(includeCategories.map((s) => String(s))) : null;
+
   const wantedTypes = (() => {
     if (type === 'all') return new Set(['live', 'movie', 'series']);
     if (type === 'vod') return new Set(['movie', 'series']);
     return new Set([type]);
   })();
 
-  const items = parsed.items.filter(i => wantedTypes.has(i.type));
+  const items = parsed.items.filter((i) => {
+    if (!wantedTypes.has(i.type)) return false;
+    if (!includeKeys) return true;
+    const key = bouquetKey(kindByItemType(i.type), normGroup(i.group));
+    return includeKeys.has(key);
+  });
   const totalItems = items.length;
   try {
     onProgress?.({
@@ -559,21 +651,28 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
     }
   }
 
-  const groupNames = Array.from(new Set(items.map(i => (i.group || 'Sem categoria').trim() || 'Sem categoria')));
+  const uniquePairs = new Map<string, { kind: 'LIVE' | 'MOVIE' | 'SERIES'; name: string }>();
+  for (const it of items) {
+    const kind = kindByItemType(it.type) as any;
+    const name = normGroup(it.group);
+    uniquePairs.set(bouquetKey(kind, name), { kind, name });
+  }
+  const pairs = Array.from(uniquePairs.values());
+
   const existingBouquets = await prisma.coreBouquet.findMany({
-    where: { ownerId, name: { in: groupNames } },
-    select: { id: true, name: true },
+    where: { ownerId, OR: pairs.map((p) => ({ kind: p.kind, name: p.name })) },
+    select: { id: true, name: true, kind: true },
   });
-  const bouquetByName = new Map(existingBouquets.map(b => [b.name, b.id] as const));
+  const bouquetByKey = new Map(existingBouquets.map((b) => [bouquetKey(String((b as any).kind), b.name), b.id] as const));
 
   let bouquetsCreated = 0;
-  for (const name of groupNames) {
-    if (bouquetByName.has(name)) continue;
+  for (const p of pairs) {
+    if (bouquetByKey.has(bouquetKey(p.kind, p.name))) continue;
     const b = await prisma.coreBouquet.create({
-      data: { ownerId, name, isActive: true },
-      select: { id: true },
+      data: { ownerId, kind: p.kind, name: p.name, isActive: true },
+      select: { id: true, kind: true, name: true },
     });
-    bouquetByName.set(name, b.id);
+    bouquetByKey.set(bouquetKey(String((b as any).kind), b.name), b.id);
     bouquetsCreated++;
   }
   try {
@@ -592,9 +691,9 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
 
   const allOwnedBouquets = await prisma.coreBouquet.findMany({
     where: { ownerId },
-    select: { id: true, name: true },
+    select: { id: true, name: true, kind: true },
   });
-  const ownedBouquetNames = new Set(allOwnedBouquets.map(b => b.name));
+  const ownedBouquetKeys = new Set(allOwnedBouquets.map((b) => bouquetKey(String((b as any).kind), b.name)));
 
   let processedItems = 0;
   const progressBase = 10;
@@ -612,14 +711,16 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
   };
 
   for (const item of items) {
-    const group = (item.group || 'Sem categoria').trim() || 'Sem categoria';
-    if (!ownedBouquetNames.has(group)) {
+    const kind = kindByItemType(item.type) as any;
+    const group = normGroup(item.group);
+    const key = bouquetKey(kind, group);
+    if (!ownedBouquetKeys.has(key)) {
       skipped++;
       processedItems++;
       if (processedItems % 25 === 0 || processedItems === totalItems) emitProgress(item.name);
       continue;
     }
-    const bouquetId = bouquetByName.get(group)!;
+    const bouquetId = bouquetByKey.get(key)!;
 
     if (item.type === 'live') {
       try {
@@ -887,7 +988,9 @@ async function runCoreM3UImport(ownerId: string, input: ImportM3UInput) {
     }
   }
 
-  const importedBouquetIds = groupNames.map((n) => bouquetByName.get(n)!).filter(Boolean);
+  const importedBouquetIds = Array.from(
+    new Set(pairs.map((p) => bouquetByKey.get(bouquetKey(p.kind, p.name))!).filter(Boolean))
+  );
 
   let createdPackage: { id: string; name: string } | null = null;
   if (createPackage) {
@@ -1114,17 +1217,54 @@ async function syncStreamEdgeServers(streamId: string, desiredServerIds: string[
 export const listStreams = asyncHandler(async (req: Request, res: Response) => {
   const currentUser = req.user!;
 
+  const q = z
+    .object({
+      page: z.coerce.number().int().min(1).default(1),
+      perPage: z.coerce.number().int().min(10).max(1000).default(50),
+      search: z.string().optional(),
+      bouquetId: z.string().uuid().optional(),
+    })
+    .parse(req.query);
+
+  const where: any = {
+    ...coreOwnerWhere(currentUser),
+  };
+
+  if (q.search && String(q.search).trim()) {
+    where.name = { contains: String(q.search).trim(), mode: 'insensitive' };
+  }
+  if (q.bouquetId) {
+    where.bouquets = {
+      some: {
+        bouquetId: q.bouquetId,
+        bouquet: { ownerId: currentUser.userId },
+      },
+    };
+  }
+
+  const total = await prisma.coreStream.count({ where });
+  const totalPages = Math.max(1, Math.ceil(total / q.perPage));
+  const page = Math.min(q.page, totalPages);
+  const skip = (page - 1) * q.perPage;
+
   const streams = await prisma.coreStream.findMany({
-    where: coreOwnerWhere(currentUser),
+    where,
     orderBy: [{ createdAt: 'desc' }],
+    take: q.perPage,
+    skip,
   });
 
-  const bouquetLinks = await prisma.coreBouquetStream.findMany({
-    where: {
-      bouquet: coreOwnerWhere(currentUser),
-    },
-    select: { streamId: true, bouquetId: true },
-  });
+  const streamIds = streams.map((s) => s.id);
+
+  const bouquetLinks = streamIds.length
+    ? await prisma.coreBouquetStream.findMany({
+        where: {
+          streamId: { in: streamIds },
+          bouquet: coreOwnerWhere(currentUser),
+        },
+        select: { streamId: true, bouquetId: true },
+      })
+    : [];
 
   const byStream: Record<string, string[]> = {};
   for (const link of bouquetLinks) {
@@ -1132,10 +1272,12 @@ export const listStreams = asyncHandler(async (req: Request, res: Response) => {
     byStream[link.streamId].push(link.bouquetId);
   }
 
-  const serverLinks = await (prisma as any).coreStreamEdgeServer.findMany({
-    where: { stream: coreOwnerWhere(currentUser) },
-    select: { streamId: true, serverId: true },
-  });
+  const serverLinks = streamIds.length
+    ? await (prisma as any).coreStreamEdgeServer.findMany({
+        where: { streamId: { in: streamIds } },
+        select: { streamId: true, serverId: true },
+      })
+    : [];
   const serversByStream: Record<string, string[]> = {};
   for (const link of serverLinks) {
     if (!serversByStream[link.streamId]) serversByStream[link.streamId] = [];
@@ -1148,6 +1290,12 @@ export const listStreams = asyncHandler(async (req: Request, res: Response) => {
       bouquetIds: byStream[s.id] || [],
       serverIds: serversByStream[s.id] || [],
     })),
+    pagination: {
+      page,
+      perPage: q.perPage,
+      total,
+      totalPages,
+    },
   });
 });
 
@@ -1350,6 +1498,111 @@ export const bulkApplyEdgeServersToStreams = asyncHandler(async (req: Request, r
       results,
     },
   });
+});
+
+export const bulkUpdateCoreStreams = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { streamIds, isActive, tvArchive, tvArchiveDuration, moveToBouquetId, ensureInPackageId } = z
+    .object({
+      streamIds: z.array(z.string().uuid()).min(1).max(500),
+      isActive: z.boolean().optional(),
+      tvArchive: z.boolean().optional(),
+      tvArchiveDuration: z.number().int().min(0).max(3650).optional(),
+      moveToBouquetId: z.string().uuid().optional(),
+      ensureInPackageId: z.string().uuid().optional(),
+    })
+    .parse(req.body);
+
+  const data: any = {};
+  if (isActive !== undefined) data.isActive = isActive;
+  if (tvArchive !== undefined) data.tvArchive = tvArchive;
+  if (tvArchiveDuration !== undefined) data.tvArchiveDuration = tvArchiveDuration;
+
+  if (!Object.keys(data).length && !moveToBouquetId && !ensureInPackageId) {
+    throw new AppError(400, 'Nenhum campo para atualizar');
+  }
+
+  const ownedStreams = await prisma.coreStream.findMany({
+    where: { id: { in: streamIds }, ...coreOwnerWhere(currentUser) },
+    select: { id: true },
+  });
+  if (ownedStreams.length !== streamIds.length) throw new AppError(403, 'Uma ou mais streams não pertencem ao usuário');
+  const ownedIds = ownedStreams.map((s) => s.id);
+
+  const result = await prisma.$transaction(async (tx) => {
+    let updated = 0;
+    let moved = 0;
+    let ensuredTotal = 0;
+    let ensuredAdded = 0;
+
+    if (Object.keys(data).length) {
+      const r = await tx.coreStream.updateMany({ where: { id: { in: ownedIds } }, data });
+      updated = r.count;
+    }
+
+    let ensureBouquetIds: string[] = [];
+    if (moveToBouquetId) {
+      const bouquet = await tx.coreBouquet.findFirst({
+        where: { id: moveToBouquetId, ownerId: currentUser.userId, kind: 'LIVE' as any },
+        select: { id: true },
+      });
+      if (!bouquet) throw new AppError(404, 'Categoria não encontrada');
+
+      await tx.coreBouquetStream.deleteMany({
+        where: { streamId: { in: ownedIds }, bouquet: { ownerId: currentUser.userId, kind: 'LIVE' as any } },
+      });
+      await tx.coreBouquetStream.createMany({
+        data: ownedIds.map((streamId) => ({ bouquetId: moveToBouquetId, streamId })),
+        skipDuplicates: true,
+      });
+      moved = ownedIds.length;
+      ensureBouquetIds = [moveToBouquetId];
+    }
+
+    if (ensureInPackageId) {
+      const pkg = await tx.corePackage.findFirst({
+        where: { id: ensureInPackageId, ownerId: currentUser.userId },
+        select: { id: true },
+      });
+      if (!pkg) throw new AppError(404, 'Pacote não encontrado');
+
+      if (!ensureBouquetIds.length) {
+        const links = await tx.coreBouquetStream.findMany({
+          where: { streamId: { in: ownedIds }, bouquet: { ownerId: currentUser.userId, kind: 'LIVE' as any } },
+          select: { bouquetId: true },
+        });
+        ensureBouquetIds = Array.from(new Set(links.map((l) => l.bouquetId)));
+      }
+
+      ensuredTotal = ensureBouquetIds.length;
+      if (ensureBouquetIds.length) {
+        const created = await tx.corePackageBouquet.createMany({
+          data: ensureBouquetIds.map((bouquetId) => ({ packageId: ensureInPackageId, bouquetId })),
+          skipDuplicates: true,
+        });
+        ensuredAdded = created.count;
+      }
+    }
+
+    return { updated, moved, ensuredTotal, ensuredAdded };
+  });
+
+  res.json({ ok: true, ...result });
+});
+
+export const bulkDeleteCoreStreams = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { streamIds } = z
+    .object({
+      streamIds: z.array(z.string().uuid()).min(1).max(500),
+    })
+    .parse(req.body);
+
+  const result = await prisma.coreStream.deleteMany({
+    where: { id: { in: streamIds }, ...coreOwnerWhere(currentUser) },
+  });
+
+  res.json({ ok: true, deleted: result.count });
 });
 
 export const listEdgeServers = asyncHandler(async (req: Request, res: Response) => {
@@ -1565,6 +1818,75 @@ export const getEdgeServersMetrics = asyncHandler(async (req: Request, res: Resp
       checkedAt: new Date().toISOString(),
       total: servers.length,
       results,
+    },
+  });
+});
+
+export const getMainMetrics = asyncHandler(async (_req: Request, res: Response) => {
+  const now = new Date();
+  const freshAfter = new Date(Date.now() - 90_000);
+  const staleWindowAfter = new Date(Date.now() - 30 * 60_000);
+
+  const [cpuNow, memPercent, net, activeSessions, distinctLines, staleSessions] = await Promise.all([
+    readMainCpuSample().catch(() => null),
+    readMainMemPercent().catch(() => null),
+    readMainNetBytes().catch(() => null),
+    prisma.corePlaybackSession
+      .count({
+        where: {
+          endedAt: null,
+          status: 'active',
+          lastSeenAt: { gt: freshAfter },
+        },
+      })
+      .catch(() => null),
+    prisma.corePlaybackSession
+      .findMany({
+        where: {
+          endedAt: null,
+          status: 'active',
+          lastSeenAt: { gt: freshAfter },
+        },
+        distinct: ['lineId'],
+        select: { lineId: true },
+      })
+      .then((rows) => rows.length)
+      .catch(() => null),
+    prisma.corePlaybackSession
+      .count({
+        where: {
+          endedAt: null,
+          status: 'active',
+          lastSeenAt: { lte: freshAfter, gt: staleWindowAfter },
+        },
+      })
+      .catch(() => null),
+  ]);
+
+  let cpuPercent: number | null = null;
+  if (cpuNow) {
+    if (mainMetricsLastCpuSample) {
+      const idleDelta = cpuNow.idle - mainMetricsLastCpuSample.idle;
+      const totalDelta = cpuNow.total - mainMetricsLastCpuSample.total;
+      if (totalDelta > 0) {
+        const usage = 1 - idleDelta / totalDelta;
+        cpuPercent = Math.max(0, Math.min(100, usage * 100));
+      }
+    }
+    mainMetricsLastCpuSample = cpuNow;
+  }
+
+  res.json({
+    data: {
+      timestamp: now.toISOString(),
+      uptimeSeconds: Math.floor(process.uptime()),
+      cpuPercent,
+      memPercent,
+      net,
+      activeConnections: typeof activeSessions === 'number' ? activeSessions : null,
+      activeUsers: typeof distinctLines === 'number' ? distinctLines : null,
+      flowsOn: typeof activeSessions === 'number' ? activeSessions : null,
+      flowsOff: typeof staleSessions === 'number' ? staleSessions : null,
     },
   });
 });
@@ -2267,6 +2589,62 @@ export const updateStream = asyncHandler(async (req: Request, res: Response) => 
   res.json({ data: { ...updated, serverIds: data.serverIds ?? undefined } });
 });
 
+export const uploadStreamLogo = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+  const file = (req as any).file;
+
+  if (!file) {
+    throw new AppError(400, 'Nenhum arquivo enviado');
+  }
+
+  const stream = await prisma.coreStream.findFirst({ where: { id, ...coreOwnerWhere(currentUser) } });
+  if (!stream) {
+    await fs.unlink(file.path).catch(() => {});
+    throw new AppError(404, 'Stream não encontrada');
+  }
+
+  const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+  if (!allowedMimes.includes(file.mimetype)) {
+    await fs.unlink(file.path).catch(() => {});
+    throw new AppError(400, 'Formato de arquivo não permitido. Use JPG, PNG, GIF ou WebP');
+  }
+
+  const maxSize = 5 * 1024 * 1024;
+  if (file.size > maxSize) {
+    await fs.unlink(file.path).catch(() => {});
+    throw new AppError(400, 'Arquivo muito grande. Tamanho máximo: 5MB');
+  }
+
+  const uploadsDir = '/app/storage/logos';
+  await fs.mkdir(uploadsDir, { recursive: true });
+
+  const ext = path.extname(file.originalname) || '.png';
+  const safeExt = ext.length <= 10 ? ext : '.png';
+  const fileName = `core-stream-${currentUser.userId}-${id}-${Date.now()}${safeExt}`;
+  const filePath = path.join(uploadsDir, fileName);
+
+  await fs.copyFile(file.path, filePath);
+  await fs.unlink(file.path).catch(() => {});
+
+  const logoUrl = `/uploads/logos/${fileName}`;
+
+  const existingLogo = String(stream.logoUrl || '');
+  if (existingLogo.startsWith('/uploads/logos/')) {
+    const oldName = existingLogo.slice('/uploads/logos/'.length);
+    if (oldName.startsWith(`core-stream-${currentUser.userId}-${id}-`)) {
+      await fs.unlink(path.join('/app/storage/logos', oldName)).catch(() => {});
+    }
+  }
+
+  const updated = await prisma.coreStream.update({
+    where: { id },
+    data: { logoUrl },
+  });
+
+  res.json({ data: updated });
+});
+
 export const removeStream = asyncHandler(async (req: Request, res: Response) => {
   const currentUser = req.user!;
   const { id } = req.params;
@@ -2287,9 +2665,9 @@ export const listBouquets = asyncHandler(async (req: Request, res: Response) => 
   const bouquets = await prisma.coreBouquet.findMany({
     where: coreOwnerWhere(currentUser),
     include: {
-      _count: { select: { streams: true } },
+      _count: { select: { streams: true, vodItems: true, series: true } },
     },
-    orderBy: [{ createdAt: 'desc' }],
+    orderBy: [{ kind: 'asc' }, { sortOrder: 'asc' }, { name: 'asc' }, { createdAt: 'asc' }],
   });
 
   res.json({ data: bouquets });
@@ -2299,15 +2677,29 @@ export const createBouquet = asyncHandler(async (req: Request, res: Response) =>
   const currentUser = req.user!;
   const data = bouquetSchema.parse(req.body);
 
+  const kind = (data as any).kind || 'LIVE';
+  if (kind !== 'LIVE' && data.streamIds?.length) {
+    throw new AppError(400, 'Categorias de Filmes/Séries não aceitam streamIds');
+  }
+
+  const maxOrder = await prisma.coreBouquet.findFirst({
+    where: { ownerId: currentUser.userId, kind: kind as any },
+    orderBy: [{ sortOrder: 'desc' }, { createdAt: 'desc' }],
+    select: { sortOrder: true },
+  });
+  const sortOrder = (data as any).sortOrder !== undefined ? (data as any).sortOrder : (maxOrder?.sortOrder || 0) + 1;
+
   const bouquet = await prisma.coreBouquet.create({
     data: {
       ownerId: currentUser.userId,
+      kind,
       name: data.name,
       isActive: data.isActive ?? true,
+      sortOrder,
     },
   });
 
-  if (data.streamIds?.length) {
+  if (kind === 'LIVE' && data.streamIds?.length) {
     const streamsCount = await prisma.coreStream.count({
       where: { id: { in: data.streamIds }, ...coreOwnerWhere(currentUser) },
     });
@@ -2328,23 +2720,106 @@ export const updateBouquet = asyncHandler(async (req: Request, res: Response) =>
   });
   if (!bouquet) throw new AppError(404, 'Bouquet não encontrado');
 
+  const nextKind = (data as any).kind === undefined ? bouquet.kind : (data as any).kind;
+  if (nextKind !== 'LIVE' && (data as any).streamIds?.length) {
+    throw new AppError(400, 'Categorias de Filmes/Séries não aceitam streamIds');
+  }
+
   const updated = await prisma.coreBouquet.update({
     where: { id },
     data: {
+      kind: (data as any).kind ?? undefined,
       name: data.name ?? undefined,
       isActive: data.isActive ?? undefined,
+      sortOrder: (data as any).sortOrder ?? undefined,
     },
   });
 
-  if (data.streamIds) {
+  if (nextKind === 'LIVE' && (data as any).streamIds) {
     const streamsCount = await prisma.coreStream.count({
-      where: { id: { in: data.streamIds }, ...coreOwnerWhere(currentUser) },
+      where: { id: { in: (data as any).streamIds }, ...coreOwnerWhere(currentUser) },
     });
-    if (streamsCount !== data.streamIds.length) throw new AppError(404, 'Uma ou mais streams não existem');
-    await syncBouquetStreams(id, data.streamIds);
+    if (streamsCount !== (data as any).streamIds.length) throw new AppError(404, 'Uma ou mais streams não existem');
+    await syncBouquetStreams(id, (data as any).streamIds);
   }
 
   res.json({ data: updated });
+});
+
+export const moveBouquet = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { id } = req.params;
+  const { direction } = z
+    .object({
+      direction: z.enum(['up', 'down', 'top', 'bottom']),
+    })
+    .parse(req.body);
+
+  const result = await prisma.$transaction(async (tx) => {
+    const current = await tx.coreBouquet.findFirst({
+      where: { id, ownerId: currentUser.userId },
+      select: { id: true, kind: true, sortOrder: true },
+    });
+    if (!current) throw new AppError(404, 'Categoria não encontrada');
+
+    const list = await tx.coreBouquet.findMany({
+      where: { ownerId: currentUser.userId, kind: current.kind as any },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+      select: { id: true, sortOrder: true },
+    });
+
+    const seen = new Set<number>();
+    let hasDup = false;
+    for (const b of list) {
+      if (seen.has(b.sortOrder)) {
+        hasDup = true;
+        break;
+      }
+      seen.add(b.sortOrder);
+    }
+    if (hasDup) {
+      let next = 1;
+      for (const b of list) {
+        if (b.sortOrder !== next) {
+          await tx.coreBouquet.update({ where: { id: b.id }, data: { sortOrder: next } });
+        }
+        next += 1;
+      }
+      for (let i = 0; i < list.length; i++) list[i].sortOrder = i + 1;
+    }
+
+    const idx = list.findIndex((b) => b.id === id);
+    if (idx === -1) throw new AppError(404, 'Categoria não encontrada');
+
+    if (direction === 'up' && idx > 0) {
+      const prev = list[idx - 1];
+      const cur = list[idx];
+      await tx.coreBouquet.update({ where: { id: cur.id }, data: { sortOrder: prev.sortOrder } });
+      await tx.coreBouquet.update({ where: { id: prev.id }, data: { sortOrder: cur.sortOrder } });
+      return { moved: true };
+    }
+    if (direction === 'down' && idx < list.length - 1) {
+      const next = list[idx + 1];
+      const cur = list[idx];
+      await tx.coreBouquet.update({ where: { id: cur.id }, data: { sortOrder: next.sortOrder } });
+      await tx.coreBouquet.update({ where: { id: next.id }, data: { sortOrder: cur.sortOrder } });
+      return { moved: true };
+    }
+    if (direction === 'top') {
+      const min = list.length ? Math.min(...list.map((b) => b.sortOrder)) : 0;
+      await tx.coreBouquet.update({ where: { id }, data: { sortOrder: min - 1 } });
+      return { moved: true };
+    }
+    if (direction === 'bottom') {
+      const max = list.length ? Math.max(...list.map((b) => b.sortOrder)) : 0;
+      await tx.coreBouquet.update({ where: { id }, data: { sortOrder: max + 1 } });
+      return { moved: true };
+    }
+
+    return { moved: false };
+  });
+
+  res.json({ ok: true, ...result });
 });
 
 export const removeBouquet = asyncHandler(async (req: Request, res: Response) => {
@@ -2360,7 +2835,38 @@ export const removeBouquet = asyncHandler(async (req: Request, res: Response) =>
   if (packagesUsing > 0) throw new AppError(400, 'Bouquet está vinculado a um ou mais pacotes');
 
   await prisma.coreBouquetStream.deleteMany({ where: { bouquetId: id } });
+  await prisma.coreBouquetVodItem.deleteMany({ where: { bouquetId: id } });
+  await prisma.coreBouquetSeries.deleteMany({ where: { bouquetId: id } });
   await prisma.coreBouquet.delete({ where: { id } });
+
+  res.json({ ok: true });
+});
+
+export const resetCoreAll = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  resetCoreSchema.parse(req.body);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.coreBouquetStream.deleteMany({ where: { bouquet: { ownerId: currentUser.userId } } });
+    await tx.coreBouquetVodItem.deleteMany({ where: { bouquet: { ownerId: currentUser.userId } } });
+    await tx.coreBouquetSeries.deleteMany({ where: { bouquet: { ownerId: currentUser.userId } } });
+
+    await tx.coreSeriesEpisode.deleteMany({ where: { series: { ownerId: currentUser.userId } } });
+    await tx.coreSeries.deleteMany({ where: { ownerId: currentUser.userId } });
+    await tx.coreVodItem.deleteMany({ where: { ownerId: currentUser.userId } });
+
+    await (tx as any).coreStreamEdgeServer.deleteMany({ where: { stream: { ownerId: currentUser.userId } } });
+    await tx.coreStream.deleteMany({ where: { ownerId: currentUser.userId } });
+
+    await tx.corePayment.deleteMany({ where: { ownerId: currentUser.userId } });
+    await tx.corePlaybackSession.deleteMany({ where: { line: { ownerId: currentUser.userId } } });
+    await tx.coreLine.deleteMany({ where: { ownerId: currentUser.userId } });
+    await tx.corePackageBouquet.deleteMany({ where: { package: { ownerId: currentUser.userId } } });
+    await tx.corePackage.deleteMany({ where: { ownerId: currentUser.userId } });
+
+    await tx.coreM3USchedule.deleteMany({ where: { ownerId: currentUser.userId } });
+    await tx.coreBouquet.deleteMany({ where: { ownerId: currentUser.userId } });
+  });
 
   res.json({ ok: true });
 });
@@ -3810,15 +4316,49 @@ export const recreateCorePaymentPix = asyncHandler(async (req: Request, res: Res
 export const listVod = asyncHandler(async (req: Request, res: Response) => {
   const currentUser = req.user!;
 
+  const q = z
+    .object({
+      page: z.coerce.number().int().min(1).default(1),
+      perPage: z.coerce.number().int().min(10).max(1000).default(50),
+      search: z.string().optional(),
+      bouquetId: z.string().uuid().optional(),
+    })
+    .parse(req.query);
+
+  const where: any = {
+    ...coreOwnerWhere(currentUser),
+  };
+  if (q.search && String(q.search).trim()) {
+    where.name = { contains: String(q.search).trim(), mode: 'insensitive' };
+  }
+  if (q.bouquetId) {
+    where.bouquets = {
+      some: {
+        bouquetId: q.bouquetId,
+        bouquet: { ownerId: currentUser.userId },
+      },
+    };
+  }
+
+  const total = await prisma.coreVodItem.count({ where });
+  const totalPages = Math.max(1, Math.ceil(total / q.perPage));
+  const page = Math.min(q.page, totalPages);
+  const skip = (page - 1) * q.perPage;
+
   const vodItems = await prisma.coreVodItem.findMany({
-    where: coreOwnerWhere(currentUser),
+    where,
     orderBy: [{ createdAt: 'desc' }],
+    take: q.perPage,
+    skip,
   });
 
-  const links = await prisma.coreBouquetVodItem.findMany({
-    where: { bouquet: coreOwnerWhere(currentUser) },
-    select: { vodItemId: true, bouquetId: true },
-  });
+  const ids = vodItems.map((v) => v.id);
+  const links = ids.length
+    ? await prisma.coreBouquetVodItem.findMany({
+        where: { vodItemId: { in: ids }, bouquet: coreOwnerWhere(currentUser) },
+        select: { vodItemId: true, bouquetId: true },
+      })
+    : [];
 
   const byVod: Record<string, string[]> = {};
   for (const l of links) {
@@ -3831,6 +4371,12 @@ export const listVod = asyncHandler(async (req: Request, res: Response) => {
       ...v,
       bouquetIds: byVod[v.id] || [],
     })),
+    pagination: {
+      page,
+      perPage: q.perPage,
+      total,
+      totalPages,
+    },
   });
 });
 
@@ -3901,6 +4447,62 @@ export const updateVod = asyncHandler(async (req: Request, res: Response) => {
   res.json({ data: updated });
 });
 
+export const uploadVodPoster = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+  const file = (req as any).file;
+
+  if (!file) {
+    throw new AppError(400, 'Nenhum arquivo enviado');
+  }
+
+  const vod = await prisma.coreVodItem.findFirst({ where: { id, ...coreOwnerWhere(currentUser) } });
+  if (!vod) {
+    await fs.unlink(file.path).catch(() => {});
+    throw new AppError(404, 'VOD não encontrado');
+  }
+
+  const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+  if (!allowedMimes.includes(file.mimetype)) {
+    await fs.unlink(file.path).catch(() => {});
+    throw new AppError(400, 'Formato de arquivo não permitido. Use JPG, PNG, GIF ou WebP');
+  }
+
+  const maxSize = 5 * 1024 * 1024;
+  if (file.size > maxSize) {
+    await fs.unlink(file.path).catch(() => {});
+    throw new AppError(400, 'Arquivo muito grande. Tamanho máximo: 5MB');
+  }
+
+  const uploadsDir = '/app/storage/posters';
+  await fs.mkdir(uploadsDir, { recursive: true });
+
+  const ext = path.extname(file.originalname) || '.jpg';
+  const safeExt = ext.length <= 10 ? ext : '.jpg';
+  const fileName = `core-vod-${currentUser.userId}-${id}-${Date.now()}${safeExt}`;
+  const filePath = path.join(uploadsDir, fileName);
+
+  await fs.copyFile(file.path, filePath);
+  await fs.unlink(file.path).catch(() => {});
+
+  const posterUrl = `/uploads/posters/${fileName}`;
+
+  const existingPoster = String(vod.posterUrl || '');
+  if (existingPoster.startsWith('/uploads/posters/')) {
+    const oldName = existingPoster.slice('/uploads/posters/'.length);
+    if (oldName.startsWith(`core-vod-${currentUser.userId}-${id}-`)) {
+      await fs.unlink(path.join('/app/storage/posters', oldName)).catch(() => {});
+    }
+  }
+
+  const updated = await prisma.coreVodItem.update({
+    where: { id },
+    data: { posterUrl },
+  });
+
+  res.json({ data: updated });
+});
+
 export const removeVod = asyncHandler(async (req: Request, res: Response) => {
   const currentUser = req.user!;
   const { id } = req.params;
@@ -3914,19 +4516,153 @@ export const removeVod = asyncHandler(async (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+export const bulkUpdateCoreVod = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { vodIds, isActive, moveToBouquetId, ensureInPackageId } = z
+    .object({
+      vodIds: z.array(z.string().uuid()).min(1).max(500),
+      isActive: z.boolean().optional(),
+      moveToBouquetId: z.string().uuid().optional(),
+      ensureInPackageId: z.string().uuid().optional(),
+    })
+    .parse(req.body);
+
+  const data: any = {};
+  if (isActive !== undefined) data.isActive = isActive;
+  if (!Object.keys(data).length && !moveToBouquetId && !ensureInPackageId) {
+    throw new AppError(400, 'Nenhum campo para atualizar');
+  }
+
+  const ownedVod = await prisma.coreVodItem.findMany({
+    where: { id: { in: vodIds }, ...coreOwnerWhere(currentUser) },
+    select: { id: true },
+  });
+  if (ownedVod.length !== vodIds.length) throw new AppError(403, 'Um ou mais filmes não pertencem ao usuário');
+  const ownedIds = ownedVod.map((v) => v.id);
+
+  const result = await prisma.$transaction(async (tx) => {
+    let updated = 0;
+    let moved = 0;
+    let ensuredTotal = 0;
+    let ensuredAdded = 0;
+
+    if (Object.keys(data).length) {
+      const r = await tx.coreVodItem.updateMany({ where: { id: { in: ownedIds } }, data });
+      updated = r.count;
+    }
+
+    let ensureBouquetIds: string[] = [];
+    if (moveToBouquetId) {
+      const bouquet = await tx.coreBouquet.findFirst({
+        where: { id: moveToBouquetId, ownerId: currentUser.userId, kind: 'MOVIE' as any },
+        select: { id: true },
+      });
+      if (!bouquet) throw new AppError(404, 'Categoria não encontrada');
+
+      await tx.coreBouquetVodItem.deleteMany({
+        where: { vodItemId: { in: ownedIds }, bouquet: { ownerId: currentUser.userId, kind: 'MOVIE' as any } },
+      });
+      await tx.coreBouquetVodItem.createMany({
+        data: ownedIds.map((vodItemId) => ({ bouquetId: moveToBouquetId, vodItemId })),
+        skipDuplicates: true,
+      });
+      moved = ownedIds.length;
+      ensureBouquetIds = [moveToBouquetId];
+    }
+
+    if (ensureInPackageId) {
+      const pkg = await tx.corePackage.findFirst({
+        where: { id: ensureInPackageId, ownerId: currentUser.userId },
+        select: { id: true },
+      });
+      if (!pkg) throw new AppError(404, 'Pacote não encontrado');
+
+      if (!ensureBouquetIds.length) {
+        const links = await tx.coreBouquetVodItem.findMany({
+          where: { vodItemId: { in: ownedIds }, bouquet: { ownerId: currentUser.userId, kind: 'MOVIE' as any } },
+          select: { bouquetId: true },
+        });
+        ensureBouquetIds = Array.from(new Set(links.map((l) => l.bouquetId)));
+      }
+
+      ensuredTotal = ensureBouquetIds.length;
+      if (ensureBouquetIds.length) {
+        const created = await tx.corePackageBouquet.createMany({
+          data: ensureBouquetIds.map((bouquetId) => ({ packageId: ensureInPackageId, bouquetId })),
+          skipDuplicates: true,
+        });
+        ensuredAdded = created.count;
+      }
+    }
+
+    return { updated, moved, ensuredTotal, ensuredAdded };
+  });
+
+  res.json({ ok: true, ...result });
+});
+
+export const bulkDeleteCoreVod = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { vodIds } = z
+    .object({
+      vodIds: z.array(z.string().uuid()).min(1).max(500),
+    })
+    .parse(req.body);
+
+  const result = await prisma.coreVodItem.deleteMany({
+    where: { id: { in: vodIds }, ...coreOwnerWhere(currentUser) },
+  });
+
+  res.json({ ok: true, deleted: result.count });
+});
+
 export const listSeries = asyncHandler(async (req: Request, res: Response) => {
   const currentUser = req.user!;
 
+  const q = z
+    .object({
+      page: z.coerce.number().int().min(1).default(1),
+      perPage: z.coerce.number().int().min(10).max(1000).default(50),
+      search: z.string().optional(),
+      bouquetId: z.string().uuid().optional(),
+    })
+    .parse(req.query);
+
+  const where: any = {
+    ...coreOwnerWhere(currentUser),
+  };
+  if (q.search && String(q.search).trim()) {
+    where.name = { contains: String(q.search).trim(), mode: 'insensitive' };
+  }
+  if (q.bouquetId) {
+    where.bouquets = {
+      some: {
+        bouquetId: q.bouquetId,
+        bouquet: { ownerId: currentUser.userId },
+      },
+    };
+  }
+
+  const total = await prisma.coreSeries.count({ where });
+  const totalPages = Math.max(1, Math.ceil(total / q.perPage));
+  const page = Math.min(q.page, totalPages);
+  const skip = (page - 1) * q.perPage;
+
   const series = await prisma.coreSeries.findMany({
-    where: coreOwnerWhere(currentUser),
+    where,
     include: { _count: { select: { episodes: true } } },
     orderBy: [{ createdAt: 'desc' }],
+    take: q.perPage,
+    skip,
   });
 
-  const links = await prisma.coreBouquetSeries.findMany({
-    where: { bouquet: coreOwnerWhere(currentUser) },
-    select: { seriesId: true, bouquetId: true },
-  });
+  const ids = series.map((s) => s.id);
+  const links = ids.length
+    ? await prisma.coreBouquetSeries.findMany({
+        where: { seriesId: { in: ids }, bouquet: coreOwnerWhere(currentUser) },
+        select: { seriesId: true, bouquetId: true },
+      })
+    : [];
 
   const bySeries: Record<string, string[]> = {};
   for (const l of links) {
@@ -3939,7 +4675,113 @@ export const listSeries = asyncHandler(async (req: Request, res: Response) => {
       ...s,
       bouquetIds: bySeries[s.id] || [],
     })),
+    pagination: {
+      page,
+      perPage: q.perPage,
+      total,
+      totalPages,
+    },
   });
+});
+
+export const bulkUpdateCoreSeries = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { seriesIds, isActive, moveToBouquetId, ensureInPackageId } = z
+    .object({
+      seriesIds: z.array(z.string().uuid()).min(1).max(500),
+      isActive: z.boolean().optional(),
+      moveToBouquetId: z.string().uuid().optional(),
+      ensureInPackageId: z.string().uuid().optional(),
+    })
+    .parse(req.body);
+
+  const data: any = {};
+  if (isActive !== undefined) data.isActive = isActive;
+  if (!Object.keys(data).length && !moveToBouquetId && !ensureInPackageId) {
+    throw new AppError(400, 'Nenhum campo para atualizar');
+  }
+
+  const ownedSeries = await prisma.coreSeries.findMany({
+    where: { id: { in: seriesIds }, ...coreOwnerWhere(currentUser) },
+    select: { id: true },
+  });
+  if (ownedSeries.length !== seriesIds.length) throw new AppError(403, 'Uma ou mais séries não pertencem ao usuário');
+  const ownedIds = ownedSeries.map((s) => s.id);
+
+  const result = await prisma.$transaction(async (tx) => {
+    let updated = 0;
+    let moved = 0;
+    let ensuredTotal = 0;
+    let ensuredAdded = 0;
+
+    if (Object.keys(data).length) {
+      const r = await tx.coreSeries.updateMany({ where: { id: { in: ownedIds } }, data });
+      updated = r.count;
+    }
+
+    let ensureBouquetIds: string[] = [];
+    if (moveToBouquetId) {
+      const bouquet = await tx.coreBouquet.findFirst({
+        where: { id: moveToBouquetId, ownerId: currentUser.userId, kind: 'SERIES' as any },
+        select: { id: true },
+      });
+      if (!bouquet) throw new AppError(404, 'Categoria não encontrada');
+
+      await tx.coreBouquetSeries.deleteMany({
+        where: { seriesId: { in: ownedIds }, bouquet: { ownerId: currentUser.userId, kind: 'SERIES' as any } },
+      });
+      await tx.coreBouquetSeries.createMany({
+        data: ownedIds.map((seriesId) => ({ bouquetId: moveToBouquetId, seriesId })),
+        skipDuplicates: true,
+      });
+      moved = ownedIds.length;
+      ensureBouquetIds = [moveToBouquetId];
+    }
+
+    if (ensureInPackageId) {
+      const pkg = await tx.corePackage.findFirst({
+        where: { id: ensureInPackageId, ownerId: currentUser.userId },
+        select: { id: true },
+      });
+      if (!pkg) throw new AppError(404, 'Pacote não encontrado');
+
+      if (!ensureBouquetIds.length) {
+        const links = await tx.coreBouquetSeries.findMany({
+          where: { seriesId: { in: ownedIds }, bouquet: { ownerId: currentUser.userId, kind: 'SERIES' as any } },
+          select: { bouquetId: true },
+        });
+        ensureBouquetIds = Array.from(new Set(links.map((l) => l.bouquetId)));
+      }
+
+      ensuredTotal = ensureBouquetIds.length;
+      if (ensureBouquetIds.length) {
+        const created = await tx.corePackageBouquet.createMany({
+          data: ensureBouquetIds.map((bouquetId) => ({ packageId: ensureInPackageId, bouquetId })),
+          skipDuplicates: true,
+        });
+        ensuredAdded = created.count;
+      }
+    }
+
+    return { updated, moved, ensuredTotal, ensuredAdded };
+  });
+
+  res.json({ ok: true, ...result });
+});
+
+export const bulkDeleteCoreSeries = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { seriesIds } = z
+    .object({
+      seriesIds: z.array(z.string().uuid()).min(1).max(500),
+    })
+    .parse(req.body);
+
+  const result = await prisma.coreSeries.deleteMany({
+    where: { id: { in: seriesIds }, ...coreOwnerWhere(currentUser) },
+  });
+
+  res.json({ ok: true, deleted: result.count });
 });
 
 export const createSeries = asyncHandler(async (req: Request, res: Response) => {
@@ -4003,6 +4845,62 @@ export const updateSeries = asyncHandler(async (req: Request, res: Response) => 
     });
     await syncSeriesBouquets(id, allOwnedBouquets.map(b => b.id), data.bouquetIds);
   }
+
+  res.json({ data: updated });
+});
+
+export const uploadSeriesCover = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+  const file = (req as any).file;
+
+  if (!file) {
+    throw new AppError(400, 'Nenhum arquivo enviado');
+  }
+
+  const series = await prisma.coreSeries.findFirst({ where: { id, ...coreOwnerWhere(currentUser) } });
+  if (!series) {
+    await fs.unlink(file.path).catch(() => {});
+    throw new AppError(404, 'Série não encontrada');
+  }
+
+  const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+  if (!allowedMimes.includes(file.mimetype)) {
+    await fs.unlink(file.path).catch(() => {});
+    throw new AppError(400, 'Formato de arquivo não permitido. Use JPG, PNG, GIF ou WebP');
+  }
+
+  const maxSize = 5 * 1024 * 1024;
+  if (file.size > maxSize) {
+    await fs.unlink(file.path).catch(() => {});
+    throw new AppError(400, 'Arquivo muito grande. Tamanho máximo: 5MB');
+  }
+
+  const uploadsDir = '/app/storage/covers';
+  await fs.mkdir(uploadsDir, { recursive: true });
+
+  const ext = path.extname(file.originalname) || '.jpg';
+  const safeExt = ext.length <= 10 ? ext : '.jpg';
+  const fileName = `core-series-${currentUser.userId}-${id}-${Date.now()}${safeExt}`;
+  const filePath = path.join(uploadsDir, fileName);
+
+  await fs.copyFile(file.path, filePath);
+  await fs.unlink(file.path).catch(() => {});
+
+  const coverUrl = `/uploads/covers/${fileName}`;
+
+  const existingCover = String(series.coverUrl || '');
+  if (existingCover.startsWith('/uploads/covers/')) {
+    const oldName = existingCover.slice('/uploads/covers/'.length);
+    if (oldName.startsWith(`core-series-${currentUser.userId}-${id}-`)) {
+      await fs.unlink(path.join('/app/storage/covers', oldName)).catch(() => {});
+    }
+  }
+
+  const updated = await prisma.coreSeries.update({
+    where: { id },
+    data: { coverUrl },
+  });
 
   res.json({ data: updated });
 });
@@ -4105,6 +5003,75 @@ export const importM3U = asyncHandler(async (req: Request, res: Response) => {
   }
   const result = await runCoreM3UImport(currentUser.userId, input);
   res.json(result);
+});
+
+export const previewM3U = asyncHandler(async (req: Request, res: Response) => {
+  const input = previewM3USchema.parse(req.body);
+  const { url, type = 'all', sampleLimit = 25 } = input;
+
+  const parser = new M3UParser();
+  const parsed = await parser.parseFromUrl(url, 120000);
+
+  const wantedTypes = (() => {
+    if (type === 'all') return new Set(['live', 'movie', 'series']);
+    if (type === 'vod') return new Set(['movie', 'series']);
+    return new Set([type]);
+  })();
+
+  const kindByItemType = (t: string) => {
+    if (t === 'live') return 'LIVE';
+    if (t === 'movie') return 'MOVIE';
+    return 'SERIES';
+  };
+  const normGroup = (g: any) => (String(g || 'Sem categoria').trim() || 'Sem categoria');
+  const keyOf = (kind: string, name: string) => `${kind}::${name}`;
+
+  const filtered = parsed.items.filter((i) => wantedTypes.has(i.type));
+
+  const catMap = new Map<string, { kind: 'LIVE' | 'MOVIE' | 'SERIES'; name: string; count: number; isAdult: boolean }>();
+  for (const it of filtered) {
+    const kind = kindByItemType(it.type) as any;
+    const name = normGroup(it.group);
+    const key = keyOf(kind, name);
+    const existing = catMap.get(key);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      catMap.set(key, { kind, name, count: 1, isAdult: isAdultCategoryName(name) });
+    }
+  }
+
+  const categories = Array.from(catMap.entries())
+    .map(([key, v]) => ({ key, kind: v.kind, name: v.name, count: v.count, isAdult: v.isAdult }))
+    .sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind.localeCompare(b.kind)));
+
+  const sample = {
+    live: [] as any[],
+    movie: [] as any[],
+    series: [] as any[],
+  };
+  for (const it of filtered) {
+    const bucket = it.type;
+    if (bucket === 'live' && sample.live.length < sampleLimit) sample.live.push(it);
+    else if (bucket === 'movie' && sample.movie.length < sampleLimit) sample.movie.push(it);
+    else if (bucket === 'series' && sample.series.length < sampleLimit) sample.series.push(it);
+    if (sample.live.length >= sampleLimit && sample.movie.length >= sampleLimit && sample.series.length >= sampleLimit) break;
+  }
+
+  res.json({
+    data: {
+      url,
+      type,
+      stats: {
+        total: filtered.length,
+        live: filtered.filter((i) => i.type === 'live').length,
+        movies: filtered.filter((i) => i.type === 'movie').length,
+        series: filtered.filter((i) => i.type === 'series').length,
+      },
+      categories,
+      sample,
+    },
+  });
 });
 
 const coreM3UScheduleTasks = new Map<string, cron.ScheduledTask>();
@@ -4553,14 +5520,51 @@ function parseXmltv(xml: string) {
 }
 
 async function fetchXmltv(url: string, timeoutMs: number) {
-  const resp = await axios.get(url, { responseType: 'arraybuffer', timeout: timeoutMs, validateStatus: () => true });
+  const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+  const doFetch = (opts?: { insecureTls?: boolean }) =>
+    axios.get(url, {
+      responseType: 'arraybuffer',
+      timeout: timeoutMs,
+      maxRedirects: 5,
+      validateStatus: () => true,
+      httpsAgent: opts?.insecureTls ? httpsAgent : undefined,
+    });
+
+  let resp: any;
+  try {
+    resp = await doFetch({ insecureTls: false });
+  } catch (error: any) {
+    const code = String(error?.code || '');
+    const msg = String(error?.message || '');
+    const isTlsError =
+      code.includes('CERT') ||
+      msg.includes('self signed certificate') ||
+      msg.includes('unable to verify the first certificate') ||
+      msg.includes('UNABLE_TO_VERIFY_LEAF_SIGNATURE') ||
+      msg.includes('DEPTH_ZERO_SELF_SIGNED_CERT');
+    if (isTlsError) {
+      resp = await doFetch({ insecureTls: true });
+    } else {
+      throw error;
+    }
+  }
+
+  if (!resp || typeof resp.status !== 'number') {
+    throw new AppError(502, 'Falha ao baixar XMLTV');
+  }
   if (resp.status >= 400) {
     throw new AppError(502, `Falha ao baixar XMLTV (${resp.status})`);
   }
+
   let buf = Buffer.from(resp.data);
   const enc = String(resp.headers?.['content-encoding'] || '').toLowerCase();
   const isGz = enc.includes('gzip') || url.toLowerCase().endsWith('.gz') || (buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b);
-  if (isGz) buf = zlib.gunzipSync(buf);
+  if (isGz) {
+    try {
+      buf = zlib.gunzipSync(buf);
+    } catch {
+    }
+  }
   return buf.toString('utf8');
 }
 
@@ -4923,6 +5927,16 @@ export const runEpgSource = asyncHandler(async (req: Request, res: Response) => 
   const { id } = req.params;
   const existing = await prisma.coreEpgSource.findFirst({ where: { id, ...coreOwnerWhere(currentUser) } });
   if (!existing) throw new AppError(404, 'Fonte EPG não encontrada');
-  const result = await executeCoreEpgSource(id, 'manual');
-  res.json({ ok: true, result });
+  try {
+    const result = await runCoreEpgImport(id);
+    res.json({ ok: true, result });
+  } catch (error: any) {
+    await prisma.coreEpgSource
+      .update({
+        where: { id },
+        data: { lastStatus: 'error', lastMessage: error?.message || String(error), lastRunAt: new Date() },
+      })
+      .catch(() => {});
+    throw error instanceof AppError ? error : new AppError(500, error?.message || 'Erro ao executar fonte EPG');
+  }
 });

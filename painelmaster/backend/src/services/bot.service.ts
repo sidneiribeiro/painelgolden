@@ -1,6 +1,7 @@
 import { prisma } from '../config/database.js';
 import { XUIClient } from './xui.client.js';
 import { whatsappService } from './whatsapp.service.js';
+import { TelegramService } from './telegram.service.js';
 
 // Helper para obter cliente XUI do servidor padrão
 async function getDefaultXuiClient(): Promise<XUIClient> {
@@ -14,7 +15,6 @@ async function getDefaultXuiClient(): Promise<XUIClient> {
   
   return new XUIClient(server);
 }
-// import { telegramService } from './telegram.service.js'; // Temporariamente desabilitado
 import { createLogger } from '../utils/logger.js';
 import { processTemplate, getReminderTemplate, defaultTemplates } from '../utils/templates.js';
 import { daysUntil } from '../utils/formatters.js';
@@ -648,7 +648,7 @@ Painel IPTV`;
     let error: string | undefined;
 
     try {
-      // Tenta WhatsApp primeiro
+      // 1) Tenta WhatsApp primeiro
       if (settings.whatsappEnabled && customer.whatsapp && settings.botbotAppKey && settings.botbotAuthKey) {
         channel = 'WHATSAPP';
         // Usar sendMessage que retorna SendResult com detalhes do erro
@@ -663,28 +663,31 @@ Painel IPTV`;
           error = result.error || 'Erro desconhecido ao enviar WhatsApp';
           logger.warn(`Falha ao enviar notificação WhatsApp: customerId=${customer.id}, type=${type}, error=${result.error}`);
         }
-      } else {
-        // Cliente não tem WhatsApp ou configurações não estão habilitadas
-        if (!customer.whatsapp) {
-          error = 'Cliente não tem WhatsApp cadastrado';
-        } else if (!settings.whatsappEnabled) {
-          error = 'Notificações WhatsApp não estão habilitadas';
-        } else if (!settings.botbotAppKey || !settings.botbotAuthKey) {
-          error = 'Chaves do botbot.chat não configuradas';
-        }
-        sent = false;
-        logger.info(`Notificação não enviada - condições não atendidas: customerId=${customer.id}, type=${type}, error=${error}`);
       }
-      // Fallback para Telegram (temporariamente desabilitado)
-      // else if (settings.telegramEnabled && customer.telegram && settings.telegramBotToken) {
-      //   channel = 'TELEGRAM';
-      //   sent = await telegramService.send({
-      //     to: customer.telegram,
-      //     message,
-      //     botToken: settings.telegramBotToken,
-      //     chatId: settings.telegramChatId,
-      //   });
-      // }
+
+      // 2) Fallback para Telegram (se WhatsApp não enviou)
+      if (!sent && settings.telegramEnabled && customer.telegram && settings.telegramBotToken) {
+        channel = 'TELEGRAM';
+        const telegramService = new TelegramService(settings.telegramBotToken);
+        const result = await telegramService.sendMessage(customer.telegram, message);
+        sent = result.success || false;
+        if (!sent) {
+          error = result.error || 'Erro desconhecido ao enviar Telegram';
+          logger.warn(`Falha ao enviar notificação Telegram: customerId=${customer.id}, type=${type}, error=${result.error}`);
+        }
+      }
+
+      if (!sent && !error) {
+        if (settings.whatsappEnabled && (!settings.botbotAppKey || !settings.botbotAuthKey)) {
+          error = 'Chaves do BotBot não configuradas';
+        } else if (settings.telegramEnabled && !settings.telegramBotToken) {
+          error = 'Token do Telegram não configurado';
+        } else if (!customer.whatsapp && !customer.telegram) {
+          error = 'Cliente não tem WhatsApp/Telegram cadastrado';
+        } else if (!settings.whatsappEnabled && !settings.telegramEnabled) {
+          error = 'Notificações WhatsApp/Telegram não estão habilitadas';
+        }
+      }
     } catch (e: any) {
       error = e.message || 'Erro desconhecido ao enviar notificação';
       sent = false;

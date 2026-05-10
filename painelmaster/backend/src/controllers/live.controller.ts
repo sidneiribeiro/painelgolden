@@ -8,6 +8,8 @@ import { LiveImporterService } from '../services/live/live-importer.service.js';
 import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger('LiveController');
+const HIDDEN_LIVE_CATEGORY_NAMES = new Set(['Conteúdos Atualizados']);
+const HIDDEN_LIVE_STREAM_NAMES = new Set(['Filmes Adicionados', 'Séries Atualizadas']);
 
 async function detectLiveCategoryTable(connection: any): Promise<string> {
   for (const t of ['streams_categories', 'stream_categories']) {
@@ -93,6 +95,7 @@ export const liveController = {
         enableTranscode: req.body.enableTranscode !== undefined ? Number(req.body.enableTranscode) : undefined,
         streamAll: req.body.streamAll !== undefined ? Number(req.body.streamAll) : undefined,
         serverId: req.body.streamServerId ? Number(req.body.streamServerId) : undefined, // ID do servidor de streaming
+        updateExistingIcons: req.body.updateExistingIcons === true,
       };
 
       // Continuar importação em background
@@ -260,7 +263,13 @@ export const liveController = {
 
         await client.disconnect();
 
-        return res.status(200).json(categories);
+        const filtered = (Array.isArray(categories) ? categories : []).filter((c: any) => {
+          const name = String(c?.category_name || '').trim();
+          if (!name) return false;
+          return !HIDDEN_LIVE_CATEGORY_NAMES.has(name);
+        });
+
+        return res.status(200).json(filtered);
       } catch (error: any) {
         logger.error('[LiveController] Erro detalhado ao buscar categorias:', {
           message: error.message,
@@ -300,7 +309,7 @@ export const liveController = {
       }
 
       const pageNum = Math.max(1, parseInt(String(page), 10) || 1);
-      const perPageNum = Math.min(200, Math.max(10, parseInt(String(perPage), 10) || 50));
+      const perPageNum = Math.min(1000, Math.max(10, parseInt(String(perPage), 10) || 50));
       const offset = (pageNum - 1) * perPageNum;
 
       const { XUIVodDBClient } = await import('../services/vod/xui-vod-db.client.js');
@@ -317,6 +326,28 @@ export const liveController = {
 
         const filters: string[] = ['s.type = 1'];
         const params: any[] = [];
+
+        if (HIDDEN_LIVE_STREAM_NAMES.size > 0) {
+          const names = Array.from(HIDDEN_LIVE_STREAM_NAMES);
+          const placeholders = names.map(() => '?').join(', ');
+          filters.push(`s.stream_display_name NOT IN (${placeholders})`);
+          params.push(...names);
+        }
+
+        if (HIDDEN_LIVE_CATEGORY_NAMES.size > 0) {
+          const hidden = Array.from(HIDDEN_LIVE_CATEGORY_NAMES);
+          const placeholders = hidden.map(() => '?').join(', ');
+          const [hiddenCats] = await connection.query<any[]>(
+            `SELECT id FROM ${catTable} WHERE category_type = 'live' AND category_name IN (${placeholders})`,
+            hidden
+          );
+          const ids = (Array.isArray(hiddenCats) ? hiddenCats : []).map((r: any) => Number(r.id)).filter((n: any) => Number.isFinite(n));
+          if (ids.length > 0) {
+            const idPlaceholders = ids.map(() => '?').join(', ');
+            filters.push(`s.category_id NOT IN (${idPlaceholders})`);
+            params.push(...ids);
+          }
+        }
 
         if (keyword && String(keyword).trim()) {
           filters.push('s.stream_display_name LIKE ?');
@@ -500,6 +531,203 @@ export const liveController = {
       }
     } catch (error: any) {
       logger.error('[LiveController] Erro ao atualizar stream:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  /**
+   * PUT /api/live/streams/bulk
+   * Atualiza em massa campos básicos de canais LIVE
+   */
+  async bulkUpdateStreams(req: Request, res: Response) {
+    try {
+      const { serverId } = req.query as any;
+      const { streamIds, categoryId, enabled, icon } = req.body || {};
+
+      if (!serverId) {
+        return res.status(400).json({ error: 'serverId é obrigatório' });
+      }
+
+      const idsRaw = Array.isArray(streamIds) ? streamIds : [];
+      const ids = idsRaw
+        .map((v: any) => parseInt(String(v), 10))
+        .filter((n: number) => Number.isFinite(n) && n > 0);
+
+      if (ids.length === 0) {
+        return res.status(400).json({ error: 'streamIds é obrigatório' });
+      }
+
+      if (ids.length > 500) {
+        return res.status(400).json({ error: 'Limite máximo: 500 streams por operação' });
+      }
+
+      const server = await prisma.xuiServer.findUnique({
+        where: { id: String(serverId) },
+      });
+
+      if (!server) {
+        return res.status(404).json({ error: 'Servidor não encontrado' });
+      }
+
+      const { XUIVodDBClient } = await import('../services/vod/xui-vod-db.client.js');
+      const client = new XUIVodDBClient(server);
+      const connection = await client.connect();
+
+      if (!connection) {
+        return res.status(500).json({ error: 'Falha ao conectar ao banco de dados' });
+      }
+
+      try {
+        const enabledCol = await detectStreamsEnabledColumn(connection);
+        const hasUpdated = await streamsHasUpdatedColumn(connection);
+
+        const sets: string[] = [];
+        const params: any[] = [];
+
+        if (categoryId !== undefined) {
+          const catIdNum = parseInt(String(categoryId), 10);
+          sets.push('category_id = ?');
+          params.push(Number.isNaN(catIdNum) ? 0 : catIdNum);
+        }
+
+        if (icon !== undefined) {
+          sets.push('stream_icon = ?');
+          params.push(String(icon || '').trim());
+        }
+
+        if (enabled !== undefined && enabledCol) {
+          sets.push(`${enabledCol} = ?`);
+          params.push(enabled ? 1 : 0);
+        }
+
+        if (hasUpdated && sets.length > 0) {
+          sets.push('updated = NOW()');
+        }
+
+        if (sets.length === 0) {
+          await client.disconnect();
+          return res.status(200).json({ success: true, affectedRows: 0 });
+        }
+
+        const placeholders = ids.map(() => '?').join(',');
+        const [result] = await connection.query<any>(
+          `UPDATE streams SET ${sets.join(', ')} WHERE type = 1 AND id IN (${placeholders})`,
+          [...params, ...ids]
+        );
+
+        await client.disconnect();
+
+        return res.status(200).json({
+          success: true,
+          affectedRows: (result as any)?.affectedRows || 0,
+        });
+      } catch (error: any) {
+        try {
+          await client.disconnect();
+        } catch {}
+        throw error;
+      }
+    } catch (error: any) {
+      logger.error('[LiveController] Erro ao atualizar streams em massa:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
+  },
+
+  /**
+   * DELETE /api/live/streams/bulk
+   * Remove em massa canais LIVE (apaga no XUI)
+   */
+  async bulkDeleteStreams(req: Request, res: Response) {
+    try {
+      const { serverId } = req.query as any;
+      const { streamIds } = req.body || {};
+
+      if (!serverId) {
+        return res.status(400).json({ error: 'serverId é obrigatório' });
+      }
+
+      const idsRaw = Array.isArray(streamIds) ? streamIds : [];
+      const ids = idsRaw
+        .map((v: any) => parseInt(String(v), 10))
+        .filter((n: number) => Number.isFinite(n) && n > 0);
+
+      if (ids.length === 0) {
+        return res.status(400).json({ error: 'streamIds é obrigatório' });
+      }
+
+      if (ids.length > 500) {
+        return res.status(400).json({ error: 'Limite máximo: 500 streams por operação' });
+      }
+
+      const server = await prisma.xuiServer.findUnique({
+        where: { id: String(serverId) },
+      });
+
+      if (!server) {
+        return res.status(404).json({ error: 'Servidor não encontrado' });
+      }
+
+      const { XUIVodDBClient } = await import('../services/vod/xui-vod-db.client.js');
+      const client = new XUIVodDBClient(server);
+      const connection = await client.connect();
+
+      if (!connection) {
+        return res.status(500).json({ error: 'Falha ao conectar ao banco de dados' });
+      }
+
+      try {
+        await connection.beginTransaction();
+
+        const placeholders = ids.map(() => '?').join(',');
+
+        await connection.query(`DELETE FROM streams_sys WHERE stream_id IN (${placeholders})`, ids);
+
+        try {
+          const [bouquets] = await connection.query<any[]>(
+            `SELECT id, bouquet_channels FROM bouquets`,
+            []
+          );
+          if (bouquets && bouquets.length > 0) {
+            for (const bouquet of bouquets) {
+              try {
+                const currentChannels = JSON.parse(bouquet.bouquet_channels || '[]');
+                const filteredChannels = Array.isArray(currentChannels)
+                  ? currentChannels.filter((id: number) => !ids.includes(id))
+                  : [];
+                if (filteredChannels.length !== (Array.isArray(currentChannels) ? currentChannels.length : 0)) {
+                  await connection.query(
+                    `UPDATE bouquets SET bouquet_channels = ? WHERE id = ?`,
+                    [JSON.stringify(filteredChannels), bouquet.id]
+                  );
+                }
+              } catch {}
+            }
+          }
+        } catch {}
+
+        const [result] = await connection.query<any>(
+          `DELETE FROM streams WHERE type = 1 AND id IN (${placeholders})`,
+          ids
+        );
+
+        await connection.commit();
+        await client.disconnect();
+
+        return res.status(200).json({
+          success: true,
+          deleted: (result as any)?.affectedRows || 0,
+        });
+      } catch (error: any) {
+        try {
+          await connection.rollback();
+        } catch {}
+        try {
+          await client.disconnect();
+        } catch {}
+        throw error;
+      }
+    } catch (error: any) {
+      logger.error('[LiveController] Erro ao remover streams em massa:', error.message);
       return res.status(500).json({ error: error.message });
     }
   },

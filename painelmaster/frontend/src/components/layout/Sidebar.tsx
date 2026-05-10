@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import {
   Bell,
   CreditCard,
@@ -72,9 +72,9 @@ export const ALL_MENU_KEYS = [
 export const MENU_KEY_LABELS: Record<string, string> = {
   dashboard: 'Dashboard',
   bouquets: 'Categorias',
-  users: 'Usuários',
+  users: 'Revendedores',
   resellers: 'Revendedores',
-  vod: 'VOD',
+  vod: 'Filmes',
   live: 'LIVE TV',
   marketing: 'Marketing',
   premium: 'Premium',
@@ -89,8 +89,8 @@ export const MENU_KEY_LABELS: Record<string, string> = {
 };
 
 // Default permissions
-const DEFAULT_RESELLER_KEYS = ['dashboard', 'notifications', 'panel_settings', 'core'];
-const DEFAULT_MASTER_RESELLER_KEYS = ['dashboard', 'notifications', 'panel_settings', 'asaas', 'backups', 'core'];
+const DEFAULT_RESELLER_KEYS = ['dashboard', 'customers', 'users', 'panel_settings', 'notifications', 'core'];
+const DEFAULT_MASTER_RESELLER_KEYS = ['dashboard', 'customers', 'users', 'panel_settings', 'notifications', 'core', 'live', 'vod'];
 
 // Navigation items
 const navItems: NavItem[] = [
@@ -98,10 +98,19 @@ const navItems: NavItem[] = [
 ];
 
 const serverItems: NavItem[] = [
-  { path: '/core', label: 'Xtream Novo', icon: Icons.core, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=overview', label: 'Dashboard', icon: Icons.dashboard, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=streams', label: 'Streams (Core)', icon: Icons.live, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=vod', label: 'Filmes (Core)', icon: Icons.vod, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=series', label: 'Séries (Core)', icon: Icons.vod, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
   { path: '/core?tab=bouquets', label: 'Categorias', icon: Icons.bouquets, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
   { path: '/core?tab=packages', label: 'Pacotes', icon: Icons.packages, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
-  { path: '/core?tab=lines', label: 'Linhas', icon: Icons.customers, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=lines', label: 'Clientes', icon: Icons.customers, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=connections', label: 'Conexões (XC)', icon: Icons.financial, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=monitor', label: 'Monitoramento', icon: Icons.notifications, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=servers', label: 'Servidores', icon: Icons.core, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=schedules', label: 'Agendas', icon: Icons.settings, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=epg', label: 'EPG', icon: Icons.live, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
+  { path: '/core?tab=overview&action=import-m3u', label: 'Importar M3U', icon: Icons.import, key: 'core', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
 ];
 
 const bouquetItems: NavItem[] = [
@@ -109,7 +118,7 @@ const bouquetItems: NavItem[] = [
 ];
 
 const managementItems: NavItem[] = [
-  { path: '/users', label: 'Usuários', icon: Icons.users, key: 'users', roles: ['SUPER_ADMIN', 'ADMIN'] },
+  { path: '/users', label: 'Revendedores', icon: Icons.users, key: 'users', roles: ['SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'] },
   { path: '/settings/access-groups', label: 'Grupos de Acesso', icon: Icons.settings, key: 'access_groups', roles: ['SUPER_ADMIN', 'ADMIN'] },
   { path: '/settings/panel', label: 'Configurações', icon: Icons.panel, key: 'panel_settings' },
   { path: '/settings/tmdb-keys', label: 'TMDB Keys', icon: Icons.tmdb, key: 'tmdb_keys', roles: ['SUPER_ADMIN', 'ADMIN'] },
@@ -129,6 +138,7 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
   const logout = useAuthStore((state) => state.logout);
   const userRole = user?.role || 'RESELLER';
   const { data: panelSettings } = usePanelSettings();
+  const location = useLocation();
 
   const userMenuPermissions: string[] | null = (() => {
     if (!user?.menuPermissions) return null;
@@ -140,7 +150,6 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
 
   const effectivePermissions: string[] | null = (() => {
     if (['SUPER_ADMIN', 'ADMIN'].includes(userRole)) return null;
-    if (userMenuPermissions && userMenuPermissions.length > 0) return userMenuPermissions;
     if (userRole === 'MASTER_RESELLER') return DEFAULT_MASTER_RESELLER_KEYS;
     return DEFAULT_RESELLER_KEYS;
   })();
@@ -168,6 +177,64 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
         ? 'bg-gradient-to-r from-cyan-500/15 to-violet-500/15 text-cyan-600 dark:text-cyan-400 font-medium'
         : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/50 hover:text-zinc-900 dark:hover:text-white'
     }`;
+
+  const parseItem = (path: string) => {
+    const qIndex = path.indexOf('?');
+    const pathname = qIndex >= 0 ? path.slice(0, qIndex) : path;
+    const search = qIndex >= 0 ? path.slice(qIndex + 1) : '';
+    return { pathname, params: new URLSearchParams(search) };
+  };
+
+  const computeCoreActivePath = () => {
+    const visible = filterByRole(serverItems);
+    const currentPathname = location.pathname;
+    const currentParams = new URLSearchParams(location.search || '');
+
+    let bestPath: string | null = null;
+    let bestScore = -1;
+
+    for (const it of visible) {
+      const parsed = parseItem(it.path);
+      if (parsed.pathname !== currentPathname) continue;
+
+      let ok = true;
+      let score = 0;
+      for (const [k, v] of parsed.params.entries()) {
+        if (currentParams.get(k) !== v) {
+          ok = false;
+          break;
+        }
+        score += 1;
+      }
+      if (!ok) continue;
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestPath = it.path;
+      }
+    }
+
+    return bestPath;
+  };
+
+  const coreActivePath = computeCoreActivePath();
+
+  const isItemActive = (item: NavItem) => {
+    const parsed = parseItem(item.path);
+    if (parsed.pathname !== location.pathname) return false;
+
+    if (item.path.startsWith('/core')) {
+      return coreActivePath === item.path;
+    }
+
+    if ([...parsed.params.keys()].length === 0) return true;
+
+    const currentParams = new URLSearchParams(location.search || '');
+    for (const [k, v] of parsed.params.entries()) {
+      if (currentParams.get(k) !== v) return false;
+    }
+    return true;
+  };
 
   return (
     <aside
@@ -217,7 +284,7 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
             <NavLink
               key={item.path}
               to={item.path}
-              className={navLinkClass}
+              className={navLinkClass({ isActive: isItemActive(item) })}
               end={item.path === '/'}
               onClick={handleNavClick}
             >
@@ -235,7 +302,7 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
               <NavLink
                 key={item.path}
                 to={item.path}
-                className={navLinkClass}
+                className={navLinkClass({ isActive: isItemActive(item) })}
                 onClick={handleNavClick}
               >
                 <span className="text-zinc-500 dark:text-zinc-400">{item.icon}</span>
@@ -253,7 +320,7 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
               <NavLink
                 key={item.path}
                 to={item.path}
-                className={navLinkClass}
+                className={navLinkClass({ isActive: isItemActive(item) })}
                 onClick={handleNavClick}
               >
                 <span className="text-zinc-500 dark:text-zinc-400">{item.icon}</span>
@@ -271,7 +338,7 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
               <NavLink
                 key={item.path}
                 to={item.path}
-                className={navLinkClass}
+                className={navLinkClass({ isActive: isItemActive(item) })}
                 onClick={handleNavClick}
               >
                 <span className="text-zinc-500 dark:text-zinc-400">{item.icon}</span>
@@ -280,6 +347,7 @@ export function Sidebar({ isOpen = false, onClose }: SidebarProps) {
             ))}
           </div>
         )}
+
       </nav>
 
       {/* User Info & Logout */}

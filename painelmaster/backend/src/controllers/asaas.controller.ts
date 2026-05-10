@@ -8,6 +8,29 @@ import crypto from 'crypto';
 
 const logger = createLogger('AsaasController');
 
+function durationToRenewDays(duration: number, durationUnit: string | null | undefined): number {
+  const n = Number(duration);
+  const unit = String(durationUnit || 'DAYS').toUpperCase();
+  if (!Number.isFinite(n) || n <= 0) return 30;
+
+  switch (unit) {
+    case 'HOURS':
+    case 'HOUR':
+      return Math.max(1, Math.ceil(n / 24));
+    case 'DAYS':
+    case 'DAY':
+      return Math.max(1, Math.floor(n));
+    case 'MONTHS':
+    case 'MONTH':
+      return Math.max(1, Math.floor(n) * 30);
+    case 'YEARS':
+    case 'YEAR':
+      return Math.max(1, Math.floor(n) * 360);
+    default:
+      return Math.max(1, Math.floor(n));
+  }
+}
+
 // ==========================================
 // CONFIGURAÇÃO
 // ==========================================
@@ -197,7 +220,7 @@ export const createPayment = asyncHandler(async (req: Request, res: Response) =>
       pixQrCode: qrCode.encodedImage,
       pixCopyPaste: qrCode.payload,
       packageId: packageId || customer.packageId,
-      daysToRenew: customer.package?.duration || 30,
+      daysToRenew: durationToRenewDays(customer.package?.duration ?? 30, customer.package?.durationUnit),
     },
   });
 
@@ -346,4 +369,3 @@ export const getPaymentPage = asyncHandler(async (req: Request, res: Response) =
     pixCopyPaste: payment.pixCopyPaste,
   });
 });
-

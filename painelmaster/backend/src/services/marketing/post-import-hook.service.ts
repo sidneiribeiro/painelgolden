@@ -6,8 +6,6 @@ import { createLogger } from '../../utils/logger.js';
 import path from 'path';
 import fs from 'fs/promises';
 import fsSync from 'fs';
-import TelegramService from '../telegram.service.js';
-import { env } from '../../config/env.js';
 
 export interface ImportedContent {
   id: number;
@@ -188,9 +186,6 @@ class PostImportHookService {
       const banners = await BannerGeneratorService.generateBatchBanners(bannerContents, importId, maxBanners);
       logger.info(`[PostImportHook] Banners gerados: V=${banners.vertical.length} H=${banners.horizontal.length}`);
 
-      // 📱 ENVIAR BANNERS PARA O TELEGRAM
-      await this.sendBannersToTelegram(banners.vertical, config, limited);
-
       // 🎬 GERAR VÍDEOS APENAS DO TIPO IMPORTADO
       const videoPaths: { movies?: string; series?: string } = {};
 
@@ -344,97 +339,6 @@ class PostImportHookService {
     }
   }
 
-  /**
-   * Envia banners para o Telegram
-   */
-  private async sendBannersToTelegram(
-    bannerPaths: string[],
-    config: { telegramBotToken?: string | null; telegramChatId?: string | null } | null,
-    contents: ImportedContent[]
-  ): Promise<void> {
-    // Verificar se Telegram está configurado
-    if (!config?.telegramBotToken || !config?.telegramChatId) {
-      logger.info(`[PostImportHook] 📱 Telegram não configurado, pulando envio de banners`);
-      return;
-    }
-
-    try {
-      const telegramService = new TelegramService(config.telegramBotToken);
-      const chatId = config.telegramChatId;
-
-      // Construir URL base da API
-      const apiUrl = env.API_URL || 'http://localhost:3001';
-      const baseUrl = apiUrl.replace(/\/$/, ''); // Remove barra final se houver
-
-      logger.info(`[PostImportHook] 📱 Enviando ${bannerPaths.length} banners para o Telegram...`);
-
-      // Enviar mensagem inicial
-      const message = `🎬 *Novos Conteúdos Adicionados!*\n\n📊 Total de banners: ${bannerPaths.length}\n\nEnviando imagens...`;
-      await telegramService.sendMessage(chatId, message);
-
-      // Enviar cada banner
-      let successCount = 0;
-      let errorCount = 0;
-
-      for (let i = 0; i < bannerPaths.length; i++) {
-        const bannerPath = bannerPaths[i];
-        
-        // Converter caminho relativo para URL pública
-        // Os banners são salvos como: /storage/banners/movies/vertical/...
-        // E são servidos via: /storage/... ou /api/storage/...
-        let publicUrl: string;
-        if (bannerPath.startsWith('/storage/')) {
-          // Caminho já começa com /storage/
-          publicUrl = `${baseUrl}${bannerPath}`;
-        } else if (bannerPath.startsWith('storage/')) {
-          // Caminho sem barra inicial
-          publicUrl = `${baseUrl}/${bannerPath}`;
-        } else {
-          // Outro formato, adicionar /storage/
-          publicUrl = `${baseUrl}/storage/${bannerPath.replace(/^\//, '')}`;
-        }
-        
-        logger.debug(`[PostImportHook] 📱 URL pública do banner: ${publicUrl}`);
-
-        try {
-          // Extrair título do conteúdo para usar como caption
-          // banners.vertical tem a mesma ordem que contents
-          const contentIndex = i < contents.length ? i : contents.length - 1;
-          const content = contents[contentIndex];
-          const caption = content 
-            ? `🎬 ${content.title}${content.year ? ` (${content.year})` : ''}`
-            : `Banner ${i + 1}`;
-
-          const result = await telegramService.sendPhoto(chatId, publicUrl, caption);
-          
-          if (result.success) {
-            successCount++;
-            logger.info(`[PostImportHook] 📱 Banner ${i + 1}/${bannerPaths.length} enviado com sucesso`);
-          } else {
-            errorCount++;
-            logger.warn(`[PostImportHook] ⚠️ Erro ao enviar banner ${i + 1}: ${result.error}`);
-          }
-
-          // Pequeno delay entre envios para não sobrecarregar a API do Telegram
-          if (i < bannerPaths.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 500)); // 500ms entre envios
-          }
-        } catch (error: any) {
-          errorCount++;
-          logger.error(`[PostImportHook] ❌ Erro ao enviar banner ${i + 1}: ${error.message}`);
-        }
-      }
-
-      // Enviar mensagem final
-      const finalMessage = `✅ *Envio Concluído!*\n\n✅ Enviados: ${successCount}\n⚠️ Erros: ${errorCount}`;
-      await telegramService.sendMessage(chatId, finalMessage);
-
-      logger.info(`[PostImportHook] 📱 Envio para Telegram concluído: ${successCount} sucesso, ${errorCount} erros`);
-    } catch (error: any) {
-      logger.error(`[PostImportHook] ❌ Erro ao enviar banners para Telegram: ${error.message}`);
-      // Não falhar o processo por causa do Telegram
-    }
-  }
 }
 
 export default new PostImportHookService();

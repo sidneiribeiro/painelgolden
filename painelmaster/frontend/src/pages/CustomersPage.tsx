@@ -23,6 +23,7 @@ interface Customer {
   name?: string;
   whatsapp?: string;
   email?: string;
+  telegram?: string;
   admin_notes?: string;
   m3u_url?: string;
   dns?: string; // DNS do servidor
@@ -52,6 +53,7 @@ interface CustomerForm {
   name: string;
   whatsapp: string;
   email: string;
+  telegram: string;
   connections: number;
   username: string;
   password: string;
@@ -71,6 +73,7 @@ const initialCustomerForm: CustomerForm = {
   name: '',
   whatsapp: '',
   email: '',
+  telegram: '',
   connections: 1,
   username: '',
   password: '',
@@ -115,6 +118,7 @@ export function CustomersPage() {
     name: '',
     whatsapp: '',
     email: '',
+    telegram: '',
     username: '',
     password: '',
     expires_at: '',
@@ -128,6 +132,7 @@ export function CustomersPage() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [renewDays, setRenewDays] = useState(30);
   const [generatedCredentials, setGeneratedCredentials] = useState<{ username: string; password: string } | null>(null);
+  const [telegramTestLoading, setTelegramTestLoading] = useState(false);
   
   // Filtros
   const [filters, setFilters] = useState({
@@ -204,6 +209,7 @@ export function CustomersPage() {
       name: customer.name || '',
       whatsapp: customer.whatsapp || '',
       email: customer.email || '',
+      telegram: customer.telegram || '',
       username: customer.username || '',
       password: customer.password || '',
       expires_at: customer.expires_at ? new Date(customer.expires_at).toISOString().slice(0, 16) : '',
@@ -211,6 +217,23 @@ export function CustomersPage() {
       packageId: pkgId,
     });
     setEditModalOpen(true);
+  };
+
+  const sendTelegramTest = async (chatIdRaw: string) => {
+    const chatId = (chatIdRaw || '').trim();
+    if (!chatId) {
+      toast.error('Informe o chat_id do Telegram');
+      return;
+    }
+    setTelegramTestLoading(true);
+    try {
+      await api.post('/notifications/test-telegram', { chatId });
+      toast.success('✅ Teste enviado no Telegram!');
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || '❌ Erro ao enviar teste no Telegram');
+    } finally {
+      setTelegramTestLoading(false);
+    }
   };
 
   // Busca clientes
@@ -245,6 +268,7 @@ export function CustomersPage() {
       if (data.name) payload.name = data.name;
       if (data.whatsapp) payload.whatsapp = data.whatsapp;
       if (data.email) payload.email = data.email;
+      if (data.telegram) payload.telegram = data.telegram;
       // IMPORTANTE: Sempre enviar username e password se foram gerados ou preenchidos
       // Para garantir que os valores gerados sejam usados
       if (data.username) payload.username = data.username;
@@ -501,6 +525,7 @@ export function CustomersPage() {
       if (data.name) payload.name = data.name;
       if (data.whatsapp) payload.whatsapp = data.whatsapp;
       if (data.email) payload.email = data.email;
+      if (data.telegram) payload.telegram = data.telegram;
       if (data.username) payload.username = data.username;
       if (data.password) payload.password = data.password;
       if (data.expires_at) payload.expires_at = new Date(data.expires_at).toISOString();
@@ -517,6 +542,7 @@ export function CustomersPage() {
         name: '',
         whatsapp: '',
         email: '',
+        telegram: '',
         username: '',
         password: '',
         expires_at: '',
@@ -681,6 +707,8 @@ export function CustomersPage() {
         </div>
       </div>
 
+      <div className="h-1 w-full bg-gradient-to-r from-emerald-500 to-cyan-600 rounded-full opacity-80" />
+
       {/* Filtro por Revendedor */}
       <div className="mb-2">
         <ResellerTreeDropdown
@@ -741,7 +769,8 @@ export function CustomersPage() {
       </div>
 
       {/* Lista de Clientes - Cards Mobile / Tabela Desktop */}
-      <Card className="overflow-hidden">
+      <Card className="relative overflow-hidden">
+        <div className="h-1 w-full bg-gradient-to-r from-emerald-500 to-cyan-600 opacity-80" />
         {/* Desktop: Tabela */}
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full text-sm">
@@ -1010,6 +1039,12 @@ export function CustomersPage() {
                       <span className="text-zinc-900 dark:text-white text-xs">{customer.whatsapp}</span>
                     </div>
                   )}
+                  {customer.telegram && (
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-zinc-600 dark:text-zinc-400">✈️ Telegram:</span>
+                      <span className="text-zinc-900 dark:text-white text-xs">{customer.telegram}</span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Botões de ação */}
@@ -1247,6 +1282,40 @@ export function CustomersPage() {
               onChange={(e) => setCustomerForm({ ...customerForm, email: e.target.value })}
               className="mt-4"
             />
+            <Input
+              label="Telegram (chat_id)"
+              value={customerForm.telegram}
+              onChange={(e) => setCustomerForm({ ...customerForm, telegram: e.target.value })}
+              placeholder="123456789 ou -1001234567890"
+              className="mt-4"
+            />
+            <div className="mt-3 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40 p-3 space-y-2">
+              <p className="text-xs font-medium text-zinc-700 dark:text-zinc-300">Como pegar o chat_id</p>
+              <ol className="text-xs text-zinc-600 dark:text-zinc-400 list-decimal list-inside space-y-1">
+                <li>Configure o Token em Configurações → Notificações → Telegram.</li>
+                <li>Abra seu bot no Telegram e envie qualquer mensagem (Start).</li>
+                <li>Use o @userinfobot para ver seu chat_id e cole aqui.</li>
+              </ol>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => window.open('https://t.me/userinfobot', '_blank', 'noopener,noreferrer')}
+                >
+                  Abrir @userinfobot
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => sendTelegramTest(customerForm.telegram)}
+                  loading={telegramTestLoading}
+                  disabled={!customerForm.telegram.trim()}
+                >
+                  Testar Telegram
+                </Button>
+              </div>
+            </div>
           </div>
 
           <div className="border-t border-zinc-200 dark:border-zinc-700 pt-4">
@@ -1686,12 +1755,41 @@ ${selectedCustomer.m3u_url}
           />
 
           <Input
+            label="Telegram (chat_id)"
+            value={editForm.telegram}
+            onChange={(e) => setEditForm({ ...editForm, telegram: e.target.value })}
+            placeholder="123456789 ou -1001234567890"
+          />
+
+          <Input
             label="Email"
             type="email"
             value={editForm.email}
             onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
             placeholder="email@exemplo.com"
           />
+
+          <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/40 p-3">
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => window.open('https://t.me/userinfobot', '_blank', 'noopener,noreferrer')}
+              >
+                Abrir @userinfobot
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => sendTelegramTest(editForm.telegram)}
+                loading={telegramTestLoading}
+                disabled={!editForm.telegram.trim()}
+              >
+                Testar Telegram
+              </Button>
+            </div>
+          </div>
 
           <Input
             label="👤 Usuário (Login XUI)"

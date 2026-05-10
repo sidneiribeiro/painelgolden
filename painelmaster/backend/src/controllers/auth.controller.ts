@@ -358,3 +358,51 @@ export const changePassword = asyncHandler(async (req: Request, res: Response) =
 
   res.json({ message: 'Senha alterada com sucesso' });
 });
+
+export const recoverAdmin = asyncHandler(async (req: Request, res: Response) => {
+  const token = String(req.headers['x-admin-recovery-token'] || '').trim();
+  if (!env.ADMIN_RECOVERY_TOKEN) {
+    throw new AppError(404, 'Rota não encontrada');
+  }
+  if (!token || token !== env.ADMIN_RECOVERY_TOKEN) {
+    throw new AppError(403, 'Sem permissão');
+  }
+
+  const data = z
+    .object({
+      username: z.string().min(1).optional(),
+      email: z.string().email().optional(),
+      password: z.string().min(6),
+    })
+    .parse(req.body || {});
+
+  const username = (data.username || 'admin').trim();
+  const email = (data.email || 'admin@painel.com').trim();
+  const hashedPassword = await hashPassword(data.password);
+
+  const existing = await prisma.user.findFirst({
+    where: { OR: [{ username }, { email }] },
+    select: { id: true },
+  });
+
+  if (existing) {
+    await prisma.user.update({
+      where: { id: existing.id },
+      data: { password: hashedPassword, status: 'ACTIVE', role: 'SUPER_ADMIN', refreshToken: null },
+    });
+  } else {
+    await prisma.user.create({
+      data: {
+        username,
+        email,
+        password: hashedPassword,
+        name: 'Administrador',
+        role: 'SUPER_ADMIN',
+        status: 'ACTIVE',
+        credits: 999999,
+      },
+    });
+  }
+
+  res.json({ ok: true });
+});

@@ -61,6 +61,7 @@ class EmailService {
         to: payload.to,
         subject: payload.subject,
         html: payload.html,
+        attachments: payload.attachments,
       });
 
       logger.info(`[Email] Enviado para ${payload.to}: ${info.messageId}`);
@@ -171,7 +172,7 @@ class EmailService {
       </head>
       <body>
         <div class="header">
-          <h1>📺 Painel IPTV</h1>
+          <h1>Xtream Novo</h1>
         </div>
         <div class="content">
           ${html}
@@ -186,4 +187,3 @@ class EmailService {
 }
 
 export const emailService = new EmailService();
-

@@ -207,6 +207,19 @@ export interface TelegramPayload extends NotificationPayload {
   chatId: string;
 }
 
+export interface EmailAttachment {
+  filename: string;
+  path: string;
+  contentType?: string;
+}
+
+export interface EmailPayload {
+  to: string;
+  subject: string;
+  html: string;
+  attachments?: EmailAttachment[];
+}
+
 // ============ SETTINGS TYPES ============
 export interface SettingItem {
   variable: string;

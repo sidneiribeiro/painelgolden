@@ -104,6 +104,46 @@ function enforceResellerLimits(data: {
   }
 }
 
+function normalizePackageName(name: string): string {
+  return String(name || '').trim().toLowerCase();
+}
+
+function pickBestDuplicatePackage(
+  a: { isActive: boolean; ownerId: string | null; updatedAt: Date; _count?: { customers?: number } },
+  b: { isActive: boolean; ownerId: string | null; updatedAt: Date; _count?: { customers?: number } }
+) {
+  const aActive = a.isActive ? 1 : 0;
+  const bActive = b.isActive ? 1 : 0;
+  if (aActive !== bActive) return aActive > bActive ? a : b;
+
+  const aCustomers = Number(a._count?.customers || 0);
+  const bCustomers = Number(b._count?.customers || 0);
+  if (aCustomers !== bCustomers) return aCustomers > bCustomers ? a : b;
+
+  const aOwned = a.ownerId ? 1 : 0;
+  const bOwned = b.ownerId ? 1 : 0;
+  if (aOwned !== bOwned) return aOwned > bOwned ? a : b;
+
+  const aUpdated = a.updatedAt instanceof Date ? a.updatedAt.getTime() : 0;
+  const bUpdated = b.updatedAt instanceof Date ? b.updatedAt.getTime() : 0;
+  if (aUpdated !== bUpdated) return aUpdated > bUpdated ? a : b;
+
+  return a;
+}
+
+function dedupePackagesByName<T extends { serverId: string; name: string; isActive: boolean; ownerId: string | null; updatedAt: Date; _count?: { customers?: number } }>(
+  pkgs: T[]
+): T[] {
+  const map = new Map<string, T>();
+  for (const p of pkgs) {
+    const key = `${p.serverId}::${normalizePackageName(p.name)}`;
+    const prev = map.get(key);
+    if (!prev) map.set(key, p);
+    else map.set(key, pickBestDuplicatePackage(prev, p) as T);
+  }
+  return Array.from(map.values());
+}
+
 /**
  * GET /api/packages-local
  */
@@ -125,7 +165,9 @@ export const getAll = asyncHandler(async (req: Request, res: Response) => {
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
   });
 
-  const formatted = packages.map(pkg => ({
+  const unique = dedupePackagesByName(packages);
+
+  const formatted = unique.map(pkg => ({
     ...pkg,
     bouquets: pkg.bouquets ? JSON.parse(pkg.bouquets) : [],
     planPriceFormatted: (pkg.planPrice / 100).toFixed(2),
@@ -278,22 +320,16 @@ export const getForSelect = asyncHandler(async (req: Request, res: Response) => 
 
   const packages = await prisma.package.findMany({
     where,
-    select: {
-      id: true,
-      externalId: true,
-      name: true,
-      duration: true,
-      durationUnit: true,
-      credits: true,
-      planPrice: true,
-      isTrial: true,
-      connections: true,
+    include: {
       server: { select: { name: true } },
+      _count: { select: { customers: true } },
     },
     orderBy: [{ isTrial: 'asc' }, { sortOrder: 'asc' }, { name: 'asc' }],
   });
 
-  const formatted = packages.map(pkg => ({
+  const unique = dedupePackagesByName(packages);
+
+  const formatted = unique.map(pkg => ({
     value: pkg.id,
     label: `${pkg.name} (${pkg.duration} ${pkg.durationUnit.toLowerCase()})`,
     serverName: pkg.server.name,

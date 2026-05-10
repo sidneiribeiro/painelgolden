@@ -8,8 +8,6 @@ interface MarketingConfig {
   id?: number;
   painelName: string;
   painelLogo?: string;
-  telegramBotToken?: string;
-  telegramChatId?: string;
   whatsappNumber?: string;
   primaryColor: string;
   secondaryColor: string;
@@ -77,8 +75,6 @@ export default function MarketingConfigPage() {
     
     const data: MarketingConfig = {
       painelName: formData.get('painelName') as string || 'PAINEL SGPLAY',
-      telegramBotToken: formData.get('telegramBotToken') as string || undefined,
-      telegramChatId: formData.get('telegramChatId') as string || undefined,
       whatsappNumber: formData.get('whatsappNumber') as string || undefined,
       primaryColor: formData.get('primaryColor') as string || '#00E5FF',
       secondaryColor: formData.get('secondaryColor') as string || '#1E88E5',
@@ -222,32 +218,6 @@ export default function MarketingConfigPage() {
                   className="flex-1"
                 />
               </div>
-            </div>
-          </div>
-        </Card>
-
-        {/* Telegram */}
-        <Card className="p-6">
-          <h2 className="text-xl font-semibold mb-4">📢 Telegram</h2>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-2">Bot Token</label>
-              <Input
-                name="telegramBotToken"
-                type="password"
-                defaultValue={config?.telegramBotToken || ''}
-                placeholder="123456:ABC-DEF..."
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-2">Chat ID</label>
-              <Input
-                name="telegramChatId"
-                defaultValue={config?.telegramChatId || ''}
-                placeholder="-1001234567890"
-              />
             </div>
           </div>
         </Card>
@@ -402,4 +372,3 @@ export default function MarketingConfigPage() {
     </div>
   );
 }
-

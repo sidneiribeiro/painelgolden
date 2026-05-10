@@ -347,6 +347,8 @@ export function PackagesPage() {
         </div>
       </div>
 
+      <div className="h-1 w-full bg-gradient-to-r from-indigo-500 to-blue-600 rounded-full opacity-80" />
+
       {/* Filtros */}
       <div className="flex gap-4 flex-wrap">
         <Select
@@ -384,7 +386,12 @@ export function PackagesPage() {
       {/* Grid de Pacotes */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {packagesData?.map((pkg) => (
-          <Card key={pkg.id} className={`p-5 ${!pkg.isActive ? 'opacity-50' : ''}`}>
+          <Card key={pkg.id} className={`p-5 relative overflow-hidden ${!pkg.isActive ? 'opacity-50' : ''}`}>
+            <div
+              className={`h-1 w-full rounded-full mb-4 opacity-80 bg-gradient-to-r ${
+                pkg.isTrial ? 'from-amber-500 to-orange-600' : 'from-indigo-500 to-blue-600'
+              }`}
+            />
             <div className="flex items-start justify-between mb-3">
               <div>
                 <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">{pkg.name}</h3>
@@ -448,7 +455,8 @@ export function PackagesPage() {
         ))}
 
         {(!packagesData || packagesData.length === 0) && (
-          <Card className="p-8 col-span-full text-center">
+          <Card className="p-8 col-span-full text-center relative overflow-hidden">
+          <div className="h-1 w-full bg-gradient-to-r from-indigo-500 to-blue-600 rounded-full mb-4 opacity-80" />
           <p className="text-zinc-600 dark:text-zinc-400 mb-4">Nenhum pacote encontrado</p>
           <p className="text-sm text-zinc-600 dark:text-zinc-500">
               Sincronize os pacotes do XUI ou crie um novo manualmente
@@ -702,4 +710,3 @@ export function PackagesPage() {
 }
 
 export default PackagesPage;
-

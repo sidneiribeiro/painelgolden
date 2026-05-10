@@ -25,7 +25,7 @@ const MENU_ITEMS: Array<{ key: string; label: string }> = [
   { key: 'packages', label: 'Pacotes' },
   { key: 'bouquets', label: 'Bouquets' },
   { key: 'core', label: 'Xtream Novo' },
-  { key: 'vod', label: 'VOD' },
+  { key: 'vod', label: 'Filmes' },
   { key: 'live', label: 'LIVE TV' },
   { key: 'marketing', label: 'Marketing' },
   { key: 'premium', label: 'Premium' },

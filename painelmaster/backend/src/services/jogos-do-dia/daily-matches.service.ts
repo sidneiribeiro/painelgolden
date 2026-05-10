@@ -10,14 +10,12 @@
 
 import { prisma } from '../../config/database.js';
 import { createLogger } from '../../utils/logger.js';
-import { env } from '../../config/env.js';
 import fs from 'fs/promises';
 import path from 'path';
 import GEApiService, { StandardizedMatch } from './ge-api.service.js';
 import { LeagueChannelMatcherService } from './league-channel-matcher.service.js';
 import { XUIVodDBClient, LiveChannelData } from '../vod/xui-vod-db.client.js';
 import FootballBannerService, { MatchData } from '../marketing/football-banner.service.js';
-import { TelegramService } from '../telegram.service.js';
 
 const logger = createLogger('DailyMatches');
 
@@ -622,110 +620,9 @@ export class DailyMatchesService {
         logger.info(`[DailyMatches] ✅ Banner ${i + 1}/${bannerPaths.length} salvo para ${matchesInBanner.length} jogo(s): ${bannerPath}`);
       }
       
-      // 📱 ENVIAR BANNERS PARA O TELEGRAM
-      await this.sendBannersToTelegram(normalizedBannerPaths, matches);
-      
     } catch (error: any) {
       logger.error(`[DailyMatches] ❌ Erro ao gerar banners: ${error.message}`);
       // Não lançar erro para não interromper o fluxo principal
-    }
-  }
-  
-  /**
-   * Envia banners de jogos do dia para o Telegram
-   */
-  private async sendBannersToTelegram(
-    bannerPaths: string[],
-    matches: any[]
-  ): Promise<void> {
-    try {
-      // Buscar configuração de marketing (Telegram)
-      const config = await prisma.marketingConfig.findFirst();
-      
-      // Verificar se Telegram está configurado
-      if (!config?.telegramBotToken || !config?.telegramChatId) {
-        logger.info(`[DailyMatches] 📱 Telegram não configurado, pulando envio de banners`);
-        return;
-      }
-
-      const telegramService = new TelegramService(config.telegramBotToken);
-      const chatId = config.telegramChatId;
-
-      // Construir URL base da API
-      const apiUrl = env.API_URL || 'http://localhost:3001';
-      const baseUrl = apiUrl.replace(/\/$/, ''); // Remove barra final se houver
-
-      logger.info(`[DailyMatches] 📱 Enviando ${bannerPaths.length} banner(s) de jogos do dia para o Telegram...`);
-
-      // Enviar mensagem inicial
-      const message = `⚽ *Jogos do Dia - Banners Gerados!*
-
-📊 Total de banners: ${bannerPaths.length}
-🎮 Total de jogos: ${matches.length}
-
-Enviando imagens...`;
-      await telegramService.sendMessage(chatId, message);
-
-      // Enviar cada banner
-      let successCount = 0;
-      let errorCount = 0;
-      const MATCHES_PER_BANNER = 5;
-
-      for (let i = 0; i < bannerPaths.length; i++) {
-        const bannerPath = bannerPaths[i];
-        
-        // Converter caminho relativo para URL pública
-        let publicUrl: string;
-        if (bannerPath.startsWith('/storage/')) {
-          publicUrl = `${baseUrl}${bannerPath}`;
-        } else if (bannerPath.startsWith('storage/')) {
-          publicUrl = `${baseUrl}/${bannerPath}`;
-        } else {
-          publicUrl = `${baseUrl}/storage/${bannerPath.replace(/^\//, '')}`;
-        }
-        
-        logger.debug(`[DailyMatches] 📱 URL pública do banner: ${publicUrl}`);
-
-        try {
-          // Criar caption com informações dos jogos deste banner
-          const startIdx = i * MATCHES_PER_BANNER;
-          const endIdx = Math.min(startIdx + MATCHES_PER_BANNER, matches.length);
-          const matchesInBanner = matches.slice(startIdx, endIdx);
-          
-          const matchList = matchesInBanner
-            .map(m => `⚽ ${m.homeTeam} x ${m.awayTeam} (${m.leagueName || 'Campeonato'})`)
-            .join('\n');
-          
-          const caption = `⚽ *Jogos do Dia - Banner ${i + 1}*\n\n${matchList}`;
-
-          const result = await telegramService.sendPhoto(chatId, publicUrl, caption);
-          
-          if (result.success) {
-            successCount++;
-            logger.info(`[DailyMatches] 📱 Banner ${i + 1}/${bannerPaths.length} enviado com sucesso`);
-          } else {
-            errorCount++;
-            logger.warn(`[DailyMatches] ⚠️ Erro ao enviar banner ${i + 1}: ${result.error}`);
-          }
-
-          // Pequeno delay entre envios para não sobrecarregar a API do Telegram
-          if (i < bannerPaths.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 1000)); // 1 segundo entre envios para dar mais tempo
-          }
-        } catch (error: any) {
-          errorCount++;
-          logger.error(`[DailyMatches] ❌ Erro ao enviar banner ${i + 1}: ${error.message}`);
-        }
-      }
-
-      // Enviar mensagem final
-      const finalMessage = `✅ *Envio Concluído!*\n\n✅ Enviados: ${successCount}\n⚠️ Erros: ${errorCount}`;
-      await telegramService.sendMessage(chatId, finalMessage);
-
-      logger.info(`[DailyMatches] 📱 Envio para Telegram concluído: ${successCount} sucesso, ${errorCount} erros`);
-    } catch (error: any) {
-      logger.error(`[DailyMatches] ❌ Erro ao enviar banners para Telegram: ${error.message}`);
-      // Não falhar o processo por causa do Telegram
     }
   }
   
@@ -890,4 +787,3 @@ Enviando imagens...`;
     }));
   }
 }
-

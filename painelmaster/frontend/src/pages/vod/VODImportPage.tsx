@@ -558,7 +558,7 @@ export function VODImportPage() {
             Importar M3U
           </h1>
           <p className="text-gray-600 dark:text-gray-400 mt-1">
-            Importe conteúdo VOD de fontes M3U para o XUI
+            Importe filmes e séries de fontes M3U para o XUI
           </p>
         </div>
         <div className="flex gap-2">
@@ -941,7 +941,7 @@ export function VODImportPage() {
                     Limpar conteúdo antes de importar
                   </span>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                    ⚠️ Remove todo o conteúdo VOD existente antes de importar o novo
+                    ⚠️ Remove todo o conteúdo de filmes/séries existente antes de importar o novo
                   </p>
                 </div>
               </label>
@@ -1099,7 +1099,7 @@ export function VODImportPage() {
                 )}
                 {xuiServers.length > 0 && (
                   <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    Servidor para processar os streams VOD (opcional)
+                    Servidor para processar os streams de filmes/séries (opcional)
                   </p>
                 )}
               </div>
@@ -1490,7 +1490,7 @@ export function VODImportPage() {
       <Modal
         isOpen={showClearModal}
         onClose={() => setShowClearModal(false)}
-        title="Limpar Conteúdo VOD"
+        title="Limpar Conteúdo (Filmes/Séries)"
         size="md"
       >
         <div className="space-y-4">
