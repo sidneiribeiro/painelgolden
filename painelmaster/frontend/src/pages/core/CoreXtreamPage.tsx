@@ -615,6 +615,7 @@ export function CoreXtreamPage() {
   const [quickTestTemplate, setQuickTestTemplate] = useState<'complete' | 'no_adult' | 'custom'>('complete');
   const [quickTestHours, setQuickTestHours] = useState(6);
   const [quickTestPackageId, setQuickTestPackageId] = useState<string>('');
+  const [clientsTemplatesOpen, setClientsTemplatesOpen] = useState(false);
   const [editingEpg, setEditingEpg] = useState<CoreEpgSource | null>(null);
   const [epgAutoMapData, setEpgAutoMapData] = useState<CoreEpgAutoMapResponse | null>(null);
   const [renewLine, setRenewLine] = useState<CoreLine | null>(null);
@@ -3746,224 +3747,240 @@ export function CoreXtreamPage() {
         <Card>
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Clientes</h3>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={openSale} disabled={isBillingBlocked}>Vender Cliente</Button>
-              <Button variant="outline" onClick={() => setQuickTestModalOpen(true)} disabled={isBillingBlocked || packages.filter((p) => p.isActive).length === 0}>
-                Gerar Teste
-              </Button>
-              <Button onClick={openCreateLine} disabled={isBillingBlocked}>Novo Cliente</Button>
-            </div>
+            <div className="text-sm text-zinc-600 dark:text-zinc-400">{lines.length} cliente(s)</div>
           </div>
-          {publicCoreCheckoutUrl ? (
-            <div className="mt-4 flex flex-col md:flex-row gap-2 md:items-end">
-              <Input
-                label="Link do Checkout Público"
-                value={publicCoreCheckoutUrl}
-                readOnly
-                onClick={(e) => (e.target as HTMLInputElement).select()}
-              />
-              <div className="flex items-center gap-2">
+
+          <div className="mt-4 grid grid-cols-1 lg:grid-cols-12 gap-3">
+            <div className="lg:col-span-3">
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3 space-y-2">
+                <Button onClick={openCreateLine} disabled={isBillingBlocked} className="w-full">
+                  Novo Cliente
+                </Button>
+                <Button variant="outline" onClick={() => setQuickTestModalOpen(true)} disabled={isBillingBlocked || packages.filter((p) => p.isActive).length === 0} className="w-full">
+                  Gerar Teste
+                </Button>
+                <Button variant="outline" onClick={openSale} disabled={isBillingBlocked} className="w-full">
+                  Vender Cliente
+                </Button>
                 <Button
                   variant="outline"
-                  onClick={async () => {
-                    try {
-                      await navigator.clipboard.writeText(publicCoreCheckoutUrl);
-                      toast.success('Link copiado!');
-                    } catch {
-                      toast.error('Erro ao copiar. Copie manualmente.');
-                    }
-                  }}
+                  onClick={() => setClientsTemplatesOpen((v) => !v)}
+                  disabled={!publicXcDnsBaseUrl && !publicCoreCheckoutUrl}
+                  className="w-full"
                 >
-                  Copiar link
-                </Button>
-                <Button variant="outline" onClick={() => window.open(publicCoreCheckoutUrl, '_blank', 'noopener,noreferrer')}>
-                  Abrir
+                  {clientsTemplatesOpen ? 'Esconder Modelos' : 'Ver Modelos'}
                 </Button>
               </div>
             </div>
-          ) : null}
-          {publicXcDnsBaseUrl ? (
-            <div className="mt-4 space-y-2">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                <Input
-                  label="XC Base (DNS)"
-                  value={publicXcDnsBaseUrl}
-                  readOnly
-                  onClick={(e) => (e.target as HTMLInputElement).select()}
-                />
-                <div className="flex items-end gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(publicXcDnsBaseUrl);
-                        toast.success('XC base copiada!');
-                      } catch {
-                        toast.error('Erro ao copiar. Copie manualmente.');
-                      }
-                    }}
-                  >
-                    Copiar
-                  </Button>
-                  <Button variant="outline" onClick={() => window.open(publicXcDnsBaseUrl, '_blank', 'noopener,noreferrer')}>
-                    Abrir
-                  </Button>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 p-3 space-y-2">
-                  <div className="text-sm font-medium text-zinc-900 dark:text-white">M3U (TS — modelo)</div>
-                  <div className="text-xs text-zinc-600 dark:text-zinc-400">Troque {`{username}`} e {`{password}`} pela linha do cliente.</div>
-                  <Input
-                    value={`${publicXcDnsBaseUrl}/get.php?username={username}&password={password}&type=m3u_plus&output=ts`}
-                    readOnly
-                    onClick={(e) => (e.target as HTMLInputElement).select()}
-                  />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={async () => {
-                      const v = `${publicXcDnsBaseUrl}/get.php?username={username}&password={password}&type=m3u_plus&output=ts`;
-                      try {
-                        await navigator.clipboard.writeText(v);
-                        toast.success('Modelo copiado!');
-                      } catch {
-                        toast.error('Erro ao copiar. Copie manualmente.');
-                      }
-                    }}
-                  >
-                    Copiar modelo
-                  </Button>
-                </div>
-                <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 p-3 space-y-2">
-                  <div className="text-sm font-medium text-zinc-900 dark:text-white">M3U (HLS — modelo)</div>
-                  <div className="text-xs text-zinc-600 dark:text-zinc-400">Troque {`{username}`} e {`{password}`} pela linha do cliente.</div>
-                  <Input
-                    value={`${publicXcDnsBaseUrl}/get.php?username={username}&password={password}&type=m3u_plus&output=m3u8`}
-                    readOnly
-                    onClick={(e) => (e.target as HTMLInputElement).select()}
-                  />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={async () => {
-                      const v = `${publicXcDnsBaseUrl}/get.php?username={username}&password={password}&type=m3u_plus&output=m3u8`;
-                      try {
-                        await navigator.clipboard.writeText(v);
-                        toast.success('Modelo copiado!');
-                      } catch {
-                        toast.error('Erro ao copiar. Copie manualmente.');
-                      }
-                    }}
-                  >
-                    Copiar modelo
-                  </Button>
-                </div>
-                <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 p-3 space-y-2">
-                  <div className="text-sm font-medium text-zinc-900 dark:text-white">XMLTV (modelo)</div>
-                  <div className="text-xs text-zinc-600 dark:text-zinc-400">Troque {`{username}`} e {`{password}`} pela linha do cliente.</div>
-                  <Input
-                    value={`${publicXcDnsBaseUrl}/xmltv.php?username={username}&password={password}`}
-                    readOnly
-                    onClick={(e) => (e.target as HTMLInputElement).select()}
-                  />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={async () => {
-                      const v = `${publicXcDnsBaseUrl}/xmltv.php?username={username}&password={password}`;
-                      try {
-                        await navigator.clipboard.writeText(v);
-                        toast.success('Modelo copiado!');
-                      } catch {
-                        toast.error('Erro ao copiar. Copie manualmente.');
-                      }
-                    }}
-                  >
-                    Copiar modelo
-                  </Button>
-                </div>
-              </div>
-            </div>
-          ) : null}
-          <div className="mt-4 overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead>
-                <tr className="text-left text-zinc-600 dark:text-zinc-400">
-                  <th className="py-2 pr-4">Usuário</th>
-                  <th className="py-2 pr-4">Status</th>
-                  <th className="py-2 pr-4">Conexões</th>
-                  <th className="py-2 pr-4">Expira</th>
-                  <th className="py-2 pr-4">Pacote</th>
-                  <th className="py-2 pr-4"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {lines.map((l) => (
-                  <tr key={l.id} className="border-t border-zinc-200/70 dark:border-zinc-800/70">
-                    <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-white">{l.username}</td>
-                    <td className="py-3 pr-4">
-                      <Badge variant={l.status === 'ACTIVE' ? 'success' : 'warning'}>
-                        {l.status === 'ACTIVE' ? 'ATIVA' : 'DESATIVADA'}
-                      </Badge>
-                    </td>
-                    <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">{l.connections}</td>
-                    <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">{toDateInput(l.expiresAt)}</td>
-                    <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">
-                      {l.packageId ? (packageById[l.packageId]?.name || l.package?.name || '-') : '-'}
-                    </td>
-                    <td className="py-3 pr-4">
-                      <div className="flex items-center gap-2 justify-end">
-                        <Button variant="outline" size="sm" onClick={() => openRenewLine(l)} disabled={isBillingBlocked}>Renovar</Button>
-                        <Button variant="outline" size="sm" onClick={() => openLineSessions(l)}>Conexões</Button>
+
+            <div className="lg:col-span-9 space-y-3">
+              {clientsTemplatesOpen ? (
+                <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3 space-y-3">
+                  {publicCoreCheckoutUrl ? (
+                    <div className="flex flex-col md:flex-row gap-2 md:items-end">
+                      <Input
+                        label="Link do Checkout Público"
+                        value={publicCoreCheckoutUrl}
+                        readOnly
+                        onClick={(e) => (e.target as HTMLInputElement).select()}
+                      />
+                      <div className="flex items-center gap-2">
                         <Button
                           variant="outline"
-                          size="sm"
-                          disabled={!publicXcDnsBaseUrl}
-                          onClick={() => {
-                            setXcLinksLine(l);
-                            setXcLinksPassword(linePasswordCacheRef.current.get(l.id) || '');
-                            setXcLinksModalOpen(true);
+                          onClick={async () => {
+                            try {
+                              await navigator.clipboard.writeText(publicCoreCheckoutUrl);
+                              toast.success('Link copiado!');
+                            } catch {
+                              toast.error('Erro ao copiar. Copie manualmente.');
+                            }
                           }}
                         >
-                          Links XC
+                          Copiar link
                         </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={isBillingBlocked || resetLinePasswordMutation.isPending}
-                          onClick={() => {
-                            if (!confirm('Resetar a senha desta linha?')) return;
-                            resetLinePasswordMutation.mutate(l);
-                          }}
-                        >
-                          Resetar senha
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={() => openEditLine(l)} disabled={isBillingBlocked}>Editar</Button>
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          disabled={isBillingBlocked}
-                          onClick={() => {
-                            if (!confirm('Remover esta linha?')) return;
-                            deleteLineMutation.mutate(l.id);
-                          }}
-                        >
-                          Remover
+                        <Button variant="outline" onClick={() => window.open(publicCoreCheckoutUrl, '_blank', 'noopener,noreferrer')}>
+                          Abrir
                         </Button>
                       </div>
-                    </td>
-                  </tr>
-                ))}
-                {lines.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
-                      Nenhuma linha criada ainda
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
+                    </div>
+                  ) : null}
+
+                  {publicXcDnsBaseUrl ? (
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        <Input
+                          label="XC Base (DNS)"
+                          value={publicXcDnsBaseUrl}
+                          readOnly
+                          onClick={(e) => (e.target as HTMLInputElement).select()}
+                        />
+                        <div className="flex items-end gap-2">
+                          <Button
+                            variant="outline"
+                            onClick={async () => {
+                              try {
+                                await navigator.clipboard.writeText(publicXcDnsBaseUrl);
+                                toast.success('XC base copiada!');
+                              } catch {
+                                toast.error('Erro ao copiar. Copie manualmente.');
+                              }
+                            }}
+                          >
+                            Copiar
+                          </Button>
+                          <Button variant="outline" onClick={() => window.open(publicXcDnsBaseUrl, '_blank', 'noopener,noreferrer')}>
+                            Abrir
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 p-3 space-y-2">
+                          <div className="text-sm font-medium text-zinc-900 dark:text-white">M3U (TS — modelo)</div>
+                          <div className="text-xs text-zinc-600 dark:text-zinc-400">Troque {`{username}`} e {`{password}`} pela linha do cliente.</div>
+                          <Input value={`${publicXcDnsBaseUrl}/get.php?username={username}&password={password}&type=m3u_plus&output=ts`} readOnly onClick={(e) => (e.target as HTMLInputElement).select()} />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={async () => {
+                              const v = `${publicXcDnsBaseUrl}/get.php?username={username}&password={password}&type=m3u_plus&output=ts`;
+                              try {
+                                await navigator.clipboard.writeText(v);
+                                toast.success('Modelo copiado!');
+                              } catch {
+                                toast.error('Erro ao copiar. Copie manualmente.');
+                              }
+                            }}
+                          >
+                            Copiar modelo
+                          </Button>
+                        </div>
+                        <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 p-3 space-y-2">
+                          <div className="text-sm font-medium text-zinc-900 dark:text-white">M3U (HLS — modelo)</div>
+                          <div className="text-xs text-zinc-600 dark:text-zinc-400">Troque {`{username}`} e {`{password}`} pela linha do cliente.</div>
+                          <Input value={`${publicXcDnsBaseUrl}/get.php?username={username}&password={password}&type=m3u_plus&output=m3u8`} readOnly onClick={(e) => (e.target as HTMLInputElement).select()} />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={async () => {
+                              const v = `${publicXcDnsBaseUrl}/get.php?username={username}&password={password}&type=m3u_plus&output=m3u8`;
+                              try {
+                                await navigator.clipboard.writeText(v);
+                                toast.success('Modelo copiado!');
+                              } catch {
+                                toast.error('Erro ao copiar. Copie manualmente.');
+                              }
+                            }}
+                          >
+                            Copiar modelo
+                          </Button>
+                        </div>
+                        <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 p-3 space-y-2 md:col-span-2">
+                          <div className="text-sm font-medium text-zinc-900 dark:text-white">XMLTV (modelo)</div>
+                          <div className="text-xs text-zinc-600 dark:text-zinc-400">Troque {`{username}`} e {`{password}`} pela linha do cliente.</div>
+                          <Input value={`${publicXcDnsBaseUrl}/xmltv.php?username={username}&password={password}`} readOnly onClick={(e) => (e.target as HTMLInputElement).select()} />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={async () => {
+                              const v = `${publicXcDnsBaseUrl}/xmltv.php?username={username}&password={password}`;
+                              try {
+                                await navigator.clipboard.writeText(v);
+                                toast.success('Modelo copiado!');
+                              } catch {
+                                toast.error('Erro ao copiar. Copie manualmente.');
+                              }
+                            }}
+                          >
+                            Copiar modelo
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-zinc-600 dark:text-zinc-400">
+                      <th className="py-2 pr-4">Usuário</th>
+                      <th className="py-2 pr-4">Status</th>
+                      <th className="py-2 pr-4">Conexões</th>
+                      <th className="py-2 pr-4">Expira</th>
+                      <th className="py-2 pr-4">Pacote</th>
+                      <th className="py-2 pr-4"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lines.map((l) => (
+                      <tr key={l.id} className="border-t border-zinc-200/70 dark:border-zinc-800/70">
+                        <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-white">{l.username}</td>
+                        <td className="py-3 pr-4">
+                          <Badge variant={l.status === 'ACTIVE' ? 'success' : 'warning'}>
+                            {l.status === 'ACTIVE' ? 'ATIVA' : 'DESATIVADA'}
+                          </Badge>
+                        </td>
+                        <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">{l.connections}</td>
+                        <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">{toDateInput(l.expiresAt)}</td>
+                        <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">
+                          {l.packageId ? (packageById[l.packageId]?.name || l.package?.name || '-') : '-'}
+                        </td>
+                        <td className="py-3 pr-4">
+                          <div className="flex items-center gap-2 justify-end">
+                            <Button variant="outline" size="sm" onClick={() => openRenewLine(l)} disabled={isBillingBlocked}>Renovar</Button>
+                            <Button variant="outline" size="sm" onClick={() => openLineSessions(l)}>Conexões</Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={!publicXcDnsBaseUrl}
+                              onClick={() => {
+                                setXcLinksLine(l);
+                                setXcLinksPassword(linePasswordCacheRef.current.get(l.id) || '');
+                                setXcLinksModalOpen(true);
+                              }}
+                            >
+                              Links XC
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={isBillingBlocked || resetLinePasswordMutation.isPending}
+                              onClick={() => {
+                                if (!confirm('Resetar a senha desta linha?')) return;
+                                resetLinePasswordMutation.mutate(l);
+                              }}
+                            >
+                              Resetar senha
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => openEditLine(l)} disabled={isBillingBlocked}>Editar</Button>
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              disabled={isBillingBlocked}
+                              onClick={() => {
+                                if (!confirm('Remover esta linha?')) return;
+                                deleteLineMutation.mutate(l.id);
+                              }}
+                            >
+                              Remover
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {lines.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
+                          Nenhuma linha criada ainda
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </Card>
       ) : null}
