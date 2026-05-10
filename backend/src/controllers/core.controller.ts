@@ -1370,6 +1370,95 @@ export const probeStreamUpstreams = asyncHandler(async (req: Request, res: Respo
   });
 });
 
+export const getStreamsHealthSummary = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+
+  const { limit } = z
+    .object({
+      limit: z.string().optional(),
+    })
+    .parse(req.query);
+
+  const maxItems = Math.min(50, Math.max(1, parseInt(String(limit || '10'), 10) || 10));
+
+  let streams: any[] = [];
+  try {
+    streams = await (prisma as any).coreStream.findMany({
+      where: { ...coreOwnerWhere(currentUser), isActive: true },
+      select: {
+        id: true,
+        name: true,
+        upstreamsCheckedAt: true,
+        upstreamsTotal: true,
+        upstreamsOk: true,
+        upstreamsDown: true,
+        upstreamsLastOkAt: true,
+        upstreamsLastOkUrl: true,
+      },
+      orderBy: [{ upstreamsDown: 'desc' }, { updatedAt: 'desc' }],
+      take: 500,
+    });
+  } catch (e: any) {
+    res.json({
+      data: {
+        checkedAt: new Date().toISOString(),
+        total: 0,
+        offlineCount: 0,
+        offline: [],
+      },
+    });
+    return;
+  }
+
+  const offline = streams.filter((s: any) => {
+    const total = typeof s.upstreamsTotal === 'number' ? s.upstreamsTotal : 0;
+    const ok = typeof s.upstreamsOk === 'number' ? s.upstreamsOk : 0;
+    return total > 0 && ok === 0;
+  });
+
+  const topOffline = offline.slice(0, maxItems);
+  const topIds = topOffline.map((s: any) => s.id);
+
+  const rows = topIds.length
+    ? await (prisma as any).coreStreamUpstreamHealth.findMany({
+        where: { streamId: { in: topIds } },
+        select: { streamId: true, url: true, ok: true, statusCode: true, error: true, lastCheckedAt: true },
+        orderBy: [{ ok: 'asc' }, { updatedAt: 'desc' }],
+      })
+    : [];
+
+  const byStream: Record<string, Array<{ url: string; ok: boolean; statusCode: number | null; error: string | null; lastCheckedAt: string | null }>> = {};
+  for (const r of rows) {
+    if (!byStream[r.streamId]) byStream[r.streamId] = [];
+    byStream[r.streamId].push({
+      url: r.url,
+      ok: !!r.ok,
+      statusCode: typeof r.statusCode === 'number' ? r.statusCode : null,
+      error: r.error ? String(r.error) : null,
+      lastCheckedAt: r.lastCheckedAt ? new Date(r.lastCheckedAt).toISOString() : null,
+    });
+  }
+
+  res.json({
+    data: {
+      checkedAt: new Date().toISOString(),
+      total: streams.length,
+      offlineCount: offline.length,
+      offline: topOffline.map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        upstreamsCheckedAt: s.upstreamsCheckedAt ? new Date(s.upstreamsCheckedAt).toISOString() : null,
+        upstreamsTotal: typeof s.upstreamsTotal === 'number' ? s.upstreamsTotal : 0,
+        upstreamsOk: typeof s.upstreamsOk === 'number' ? s.upstreamsOk : 0,
+        upstreamsDown: typeof s.upstreamsDown === 'number' ? s.upstreamsDown : 0,
+        upstreamsLastOkAt: s.upstreamsLastOkAt ? new Date(s.upstreamsLastOkAt).toISOString() : null,
+        upstreamsLastOkUrl: s.upstreamsLastOkUrl ? String(s.upstreamsLastOkUrl) : null,
+        urls: (byStream[s.id] || []).slice(0, 10),
+      })),
+    },
+  });
+});
+
 export const bulkApplyEdgeServersToStreams = asyncHandler(async (req: Request, res: Response) => {
   const currentUser = req.user!;
   const { streamIds, mode } = z

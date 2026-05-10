@@ -32,6 +32,7 @@ let corePaymentReminderJob: any = null;
 let backupDbJob: any = null;
 let backupFullJob: any = null;
 let edgeMonitorJob: any = null;
+let coreStreamsHealthJob: any = null;
 
 const edgeMonitorConsecutiveBad = new Map<string, number>();
 const edgeMonitorLastAlertAt = new Map<string, number>();
@@ -219,6 +220,165 @@ async function fetchEdgeMetrics(server: {
   return { ok: false, error: msg, ms: typeof lastErr?.ms === 'number' ? lastErr.ms : 0, status: typeof lastErr?.status === 'number' ? lastErr.status : null, metrics: null as any };
 }
 
+function parseCoreUpstreamCandidates(raw: string) {
+  const lines = String(raw || '')
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const uniq: string[] = [];
+  const seen = new Set<string>();
+  for (const l of lines) {
+    if (seen.has(l)) continue;
+    seen.add(l);
+    uniq.push(l);
+  }
+  return uniq;
+}
+
+async function probeCoreUpstream(url: string, timeoutMs: number) {
+  const startedAt = Date.now();
+  let status: number | null = null;
+  let ok = false;
+  let error: string | null = null;
+
+  if (!/^https?:\/\//i.test(url)) {
+    error = 'URL não suportada';
+    return { url, ok: false, status, ms: Math.max(0, Date.now() - startedAt), error };
+  }
+
+  try {
+    const upstream = await axios.request({
+      url,
+      method: 'GET',
+      responseType: 'stream',
+      timeout: timeoutMs,
+      maxRedirects: 3,
+      validateStatus: () => true,
+      headers: {
+        'user-agent': 'PainelMaster/StreamHealth',
+      },
+    });
+    status = typeof upstream.status === 'number' ? upstream.status : null;
+    ok = typeof upstream.status === 'number' ? upstream.status < 400 : false;
+    try {
+      if (upstream?.data && typeof (upstream.data as any).destroy === 'function') (upstream.data as any).destroy();
+    } catch {}
+  } catch (e: any) {
+    error = e?.message ? String(e.message) : 'Falha ao conectar';
+  }
+
+  return { url, ok, status, ms: Math.max(0, Date.now() - startedAt), error };
+}
+
+async function checkCoreStreamsUpstreams() {
+  const enabled = String(process.env.CORE_STREAM_HEALTH_ENABLED || 'true').toLowerCase() === 'true';
+  if (!enabled) return;
+
+  try {
+    await (prisma as any).coreStreamUpstreamHealth.findFirst({ select: { id: true } });
+  } catch (e: any) {
+    logger.warn(`[CoreStreamsHealth] Tabelas/colunas ainda não existem no banco (rode prisma db push). Detalhe: ${e?.message || e}`);
+    return;
+  }
+
+  const timeoutMs = Math.min(20000, Math.max(2000, parseInt(String(process.env.CORE_STREAM_HEALTH_TIMEOUT_MS || '8000'), 10) || 8000));
+  const maxUrlsPerStream = Math.min(50, Math.max(1, parseInt(String(process.env.CORE_STREAM_HEALTH_MAX_URLS || '10'), 10) || 10));
+  const concurrency = Math.min(10, Math.max(1, parseInt(String(process.env.CORE_STREAM_HEALTH_CONCURRENCY || '3'), 10) || 3));
+
+  const checkedAt = new Date();
+
+  const streams = await prisma.coreStream.findMany({
+    where: { isActive: true },
+    select: { id: true, name: true, ownerId: true, streamUrl: true },
+    orderBy: [{ updatedAt: 'desc' }],
+  });
+
+  const queue = streams.slice();
+  const workers: Promise<void>[] = [];
+
+  const runOne = async (stream: { id: string; name: string; ownerId: string; streamUrl: string }) => {
+    const urlsAll = parseCoreUpstreamCandidates(stream.streamUrl || '').filter((u) => /^https?:\/\//i.test(u));
+    const urls = urlsAll.slice(0, maxUrlsPerStream);
+
+    let okCount = 0;
+    let downCount = 0;
+    let lastOkUrl: string | null = null;
+    let lastOkAt: Date | null = null;
+
+    for (const url of urls) {
+      const result = await probeCoreUpstream(url, timeoutMs);
+
+      if (result.ok) {
+        okCount++;
+        lastOkUrl = url;
+        lastOkAt = checkedAt;
+      } else {
+        downCount++;
+      }
+
+      await (prisma as any).coreStreamUpstreamHealth.upsert({
+        where: { streamId_url: { streamId: stream.id, url } },
+        create: {
+          streamId: stream.id,
+          url,
+          ok: result.ok,
+          statusCode: result.status,
+          ms: result.ms,
+          error: result.error,
+          consecutiveFails: result.ok ? 0 : 1,
+          lastCheckedAt: checkedAt,
+          lastOkAt: result.ok ? checkedAt : null,
+        },
+        update: {
+          ok: result.ok,
+          statusCode: result.status,
+          ms: result.ms,
+          error: result.error,
+          consecutiveFails: result.ok ? 0 : { increment: 1 },
+          lastCheckedAt: checkedAt,
+          lastOkAt: result.ok ? checkedAt : undefined,
+        },
+      });
+    }
+
+    if (urlsAll.length > 0) {
+      await (prisma as any).coreStreamUpstreamHealth.deleteMany({
+        where: { streamId: stream.id, url: { notIn: urlsAll } },
+      });
+    }
+
+    await (prisma as any).coreStream.update({
+      where: { id: stream.id },
+      data: {
+        upstreamsCheckedAt: checkedAt,
+        upstreamsTotal: urls.length,
+        upstreamsOk: okCount,
+        upstreamsDown: downCount,
+        upstreamsLastOkAt: lastOkAt,
+        upstreamsLastOkUrl: lastOkUrl,
+      },
+    });
+  };
+
+  for (let i = 0; i < concurrency; i++) {
+    workers.push(
+      (async () => {
+        while (queue.length) {
+          const next = queue.shift();
+          if (!next) return;
+          try {
+            await runOne(next as any);
+          } catch (e: any) {
+            logger.warn(`[CoreStreamsHealth] Falha ao checar stream "${(next as any)?.name || next?.id}": ${e?.message || e}`);
+          }
+        }
+      })()
+    );
+  }
+
+  await Promise.all(workers);
+}
+
 export async function startScheduler() {
   logger.info('Iniciando scheduler de jobs');
   
@@ -231,6 +391,20 @@ export async function startScheduler() {
 
   await initializeCoreM3USchedules();
   await initializeCoreEpgSchedules();
+
+  const coreStreamCron = String(process.env.CORE_STREAM_HEALTH_CRON || '*/10 * * * *');
+  coreStreamsHealthJob = cron.schedule(coreStreamCron, async () => {
+    try {
+      await checkCoreStreamsUpstreams();
+    } catch (e: any) {
+      logger.warn(`[CoreStreamsHealth] Erro: ${e?.message || e}`);
+    }
+  });
+  try {
+    await checkCoreStreamsUpstreams();
+  } catch (e: any) {
+    logger.warn(`[CoreStreamsHealth] Erro no check inicial: ${e?.message || e}`);
+  }
 
   corePlaybackSessionReaperJob = cron.schedule('*/5 * * * *', async () => {
     const staleBefore = new Date(Date.now() - 2 * 60 * 1000);

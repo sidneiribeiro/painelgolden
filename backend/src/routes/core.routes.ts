@@ -4,6 +4,7 @@ import { billingMiddleware, requireBillingValid } from '../middleware/billingMid
 import { upload } from '../middleware/upload.js';
 import {
   listStreams,
+  getStreamsHealthSummary,
   probeStreamUpstreams,
   bulkApplyEdgeServersToStreams,
   bulkUpdateCoreStreams,
@@ -96,6 +97,7 @@ router.use(billingMiddleware);
 router.use(requireRole('SUPER_ADMIN', 'ADMIN', 'MASTER_RESELLER', 'RESELLER'));
 
 router.get('/streams', listStreams);
+router.get('/streams/health/summary', getStreamsHealthSummary);
 router.get('/streams/:id/probe', requireBillingValid, probeStreamUpstreams);
 router.post('/streams/bulk/apply-servers', requireBillingValid, bulkApplyEdgeServersToStreams);
 router.put('/streams/bulk', requireBillingValid, bulkUpdateCoreStreams);

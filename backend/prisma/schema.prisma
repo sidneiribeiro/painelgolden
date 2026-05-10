@@ -882,6 +882,12 @@ model CoreStream {
   ownerId   String
   name      String
   streamUrl String   @db.Text
+  upstreamsCheckedAt DateTime?
+  upstreamsTotal     Int      @default(0)
+  upstreamsOk        Int      @default(0)
+  upstreamsDown      Int      @default(0)
+  upstreamsLastOkAt  DateTime?
+  upstreamsLastOkUrl String?  @db.Text
   logoUrl   String?  @db.Text
   epgChannelId String?
   tvArchive Boolean  @default(false)
@@ -898,6 +904,29 @@ model CoreStream {
   @@index([isActive])
   @@unique([ownerId, name])
   @@map("core_stream")
+}
+
+model CoreStreamUpstreamHealth {
+  id              String   @id @default(uuid())
+  streamId        String
+  url             String   @db.Text
+  ok              Boolean  @default(false)
+  statusCode      Int?
+  ms              Int?
+  error           String?
+  consecutiveFails Int     @default(0)
+  lastCheckedAt   DateTime?
+  lastOkAt        DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  stream          CoreStream @relation(fields: [streamId], references: [id], onDelete: Cascade)
+
+  @@unique([streamId, url])
+  @@index([streamId])
+  @@index([ok])
+  @@index([lastCheckedAt])
+  @@map("core_stream_upstream_health")
 }
 
 model CoreEdgeServer {
