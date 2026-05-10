@@ -486,6 +486,14 @@ const parseTabFromSearch = (search: string): TabKey => {
   return allowed.includes(t as TabKey) ? (t as TabKey) : 'overview';
 };
 
+type LinesView = 'manage' | 'tools';
+
+const parseLinesViewFromSearch = (search: string): LinesView => {
+  const raw = new URLSearchParams(search || '').get('view');
+  const v = (raw || '').trim();
+  return v === 'tools' ? 'tools' : 'manage';
+};
+
 const toDateInput = (iso: string) => {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
@@ -618,7 +626,7 @@ export function CoreXtreamPage() {
   const [quickTestHours, setQuickTestHours] = useState(6);
   const [quickTestPackageId, setQuickTestPackageId] = useState<string>('');
   const [clientsTemplatesOpen, setClientsTemplatesOpen] = useState(false);
-  const [clientsView, setClientsView] = useState<'my' | 'manage'>('manage');
+  const [clientsView, setClientsView] = useState<LinesView>(() => parseLinesViewFromSearch(location.search));
   const [manageLinesPage, setManageLinesPage] = useState(1);
   const [manageLinesPerPage, setManageLinesPerPage] = useState(50);
   const [manageLinesSearch, setManageLinesSearch] = useState('');
@@ -724,6 +732,13 @@ export function CoreXtreamPage() {
   useEffect(() => {
     const next = parseTabFromSearch(location.search);
     setTab((prev) => (prev === next ? prev : next));
+  }, [location.search]);
+
+  useEffect(() => {
+    const nextTab = parseTabFromSearch(location.search);
+    if (nextTab !== 'lines') return;
+    const nextView = parseLinesViewFromSearch(location.search);
+    setClientsView((prev) => (prev === nextView ? prev : nextView));
   }, [location.search]);
 
   const openImportModal = () => {
@@ -1119,7 +1134,7 @@ export function CoreXtreamPage() {
       const res = await api.get('/core/lines');
       return res.data;
     },
-    enabled: tab === 'lines' && clientsView === 'my' && !(isAdmin || isMaster),
+    enabled: false,
   });
 
   const manageLinesQueryParams = useMemo(() => {
@@ -1139,7 +1154,7 @@ export function CoreXtreamPage() {
       const res = await api.get('/core/lines/manage', { params });
       return res.data;
     },
-    enabled: tab === 'lines' && (clientsView === 'manage' || (clientsView === 'my' && (isAdmin || isMaster))),
+    enabled: tab === 'lines' && clientsView === 'manage',
   });
 
   const renewOwnerId = String((renewLine as any)?.ownerId || '').trim();
@@ -1478,7 +1493,7 @@ export function CoreXtreamPage() {
 
   useEffect(() => {
     if (tab !== 'lines') return;
-    if (clientsView !== 'manage' && clientsView !== 'my') setClientsView('manage');
+    if (clientsView !== 'manage' && clientsView !== 'tools') setClientsView('manage');
   }, [tab, isAdmin, isMaster]);
 
   useEffect(() => {
@@ -3822,53 +3837,39 @@ export function CoreXtreamPage() {
         <Card>
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Clientes</h3>
-            <div className="text-sm text-zinc-600 dark:text-zinc-400">
-              {clientsView === 'manage' || isAdmin || isMaster ? `${manageLinesPagination.total} cliente(s)` : `${lines.length} cliente(s)`}
-            </div>
+            <div className="text-sm text-zinc-600 dark:text-zinc-400">{clientsView === 'manage' ? `${manageLinesPagination.total} cliente(s)` : ''}</div>
           </div>
 
-          <div className="mt-4 grid grid-cols-1 lg:grid-cols-12 gap-3">
-            <div className="lg:col-span-3">
-              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3 space-y-2">
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    variant={clientsView === 'manage' ? 'default' : 'outline'}
-                    onClick={() => setClientsView('manage')}
-                    className="w-full"
-                  >
-                    Gerir clientes
+          {clientsView === 'tools' ? (
+            <div className="mt-4 space-y-3">
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                  <Button onClick={openCreateLine} disabled={isBillingBlocked} className="w-full">
+                    Novo Cliente
                   </Button>
                   <Button
-                    variant={clientsView === 'my' ? 'default' : 'outline'}
-                    onClick={() => setClientsView('my')}
+                    variant="outline"
+                    onClick={() => setQuickTestModalOpen(true)}
+                    disabled={isBillingBlocked || packages.filter((p) => p.isActive).length === 0}
                     className="w-full"
                   >
-                    Ferramentas
+                    Gerar Teste
+                  </Button>
+                  <Button variant="outline" onClick={openSale} disabled={isBillingBlocked} className="w-full">
+                    Vender Cliente
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setClientsTemplatesOpen((v) => !v)}
+                    disabled={!publicXcDnsBaseUrl && !publicCoreCheckoutUrl}
+                    className="w-full"
+                  >
+                    {clientsTemplatesOpen ? 'Esconder Modelos' : 'Ver Modelos'}
                   </Button>
                 </div>
-
-                <Button onClick={openCreateLine} disabled={isBillingBlocked} className="w-full">
-                  Novo Cliente
-                </Button>
-                <Button variant="outline" onClick={() => setQuickTestModalOpen(true)} disabled={isBillingBlocked || packages.filter((p) => p.isActive).length === 0} className="w-full">
-                  Gerar Teste
-                </Button>
-                <Button variant="outline" onClick={openSale} disabled={isBillingBlocked} className="w-full">
-                  Vender Cliente
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => setClientsTemplatesOpen((v) => !v)}
-                  disabled={!publicXcDnsBaseUrl && !publicCoreCheckoutUrl}
-                  className="w-full"
-                >
-                  {clientsTemplatesOpen ? 'Esconder Modelos' : 'Ver Modelos'}
-                </Button>
               </div>
-            </div>
 
-            <div className="lg:col-span-9 space-y-3">
-              {clientsView === 'my' && clientsTemplatesOpen ? (
+              {clientsTemplatesOpen ? (
                 <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3 space-y-3">
                   {publicCoreCheckoutUrl ? (
                     <div className="flex flex-col md:flex-row gap-2 md:items-end">
@@ -3994,47 +3995,47 @@ export function CoreXtreamPage() {
                   ) : null}
                 </div>
               ) : null}
-
-              {clientsView === 'manage' ? (
-                <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3 space-y-3">
-                  <div className="flex flex-col md:flex-row gap-2 md:items-end">
-                    <Input
-                      label="Pesquisar"
-                      placeholder="Buscar por usuário do cliente..."
-                      value={manageLinesSearch}
-                      onChange={(e) => setManageLinesSearch(e.target.value)}
-                    />
-                    <Select
-                      label="Por página"
-                      value={String(manageLinesPerPage)}
-                      onChange={(e) => setManageLinesPerPage(parseInt(e.target.value, 10))}
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3 space-y-3">
+                <div className="flex flex-col md:flex-row gap-2 md:items-end">
+                  <Input
+                    label="Pesquisar"
+                    placeholder="Buscar por usuário do cliente..."
+                    value={manageLinesSearch}
+                    onChange={(e) => setManageLinesSearch(e.target.value)}
+                  />
+                  <Select
+                    label="Por página"
+                    value={String(manageLinesPerPage)}
+                    onChange={(e) => setManageLinesPerPage(parseInt(e.target.value, 10))}
+                  >
+                    {[25, 50, 100, 200].map((n) => (
+                      <option key={n} value={String(n)}>
+                        {n}
+                      </option>
+                    ))}
+                  </Select>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setManageLinesSearch('');
+                        setManageLinesOwnerId('');
+                      }}
                     >
-                      {[25, 50, 100, 200].map((n) => (
-                        <option key={n} value={String(n)}>
-                          {n}
-                        </option>
-                      ))}
-                    </Select>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          setManageLinesSearch('');
-                          setManageLinesOwnerId('');
-                        }}
-                      >
-                        Limpar
-                      </Button>
-                    </div>
+                      Limpar
+                    </Button>
                   </div>
                 </div>
-              ) : null}
+              </div>
 
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
                   <thead>
                     <tr className="text-left text-zinc-600 dark:text-zinc-400">
-                      {clientsView === 'manage' && (isAdmin || isMaster) ? <th className="py-2 pr-4">Revenda</th> : null}
+                      {isAdmin || isMaster ? <th className="py-2 pr-4">Revenda</th> : null}
                       <th className="py-2 pr-4">Usuário</th>
                       <th className="py-2 pr-4">Status</th>
                       <th className="py-2 pr-4">Conexões</th>
@@ -4044,94 +4045,21 @@ export function CoreXtreamPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {clientsView === 'manage' || (clientsView === 'my' && (isAdmin || isMaster)) ? (
-                      <>
-                        {manageLinesLoading ? (
-                          <tr>
-                            <td colSpan={clientsView === 'manage' && (isAdmin || isMaster) ? 7 : 6} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
-                              Carregando...
-                            </td>
-                          </tr>
-                        ) : null}
-                        {manageLines.map((l: any) => (
-                          <tr key={l.id} className="border-t border-zinc-200/70 dark:border-zinc-800/70">
-                            {clientsView === 'manage' && (isAdmin || isMaster) ? (
-                              <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">
-                                <div className="font-medium text-zinc-900 dark:text-white">{l.owner?.username || '-'}</div>
-                                {isAdmin ? <div className="text-xs text-zinc-600 dark:text-zinc-400">Master: {l.owner?.parent?.username || '-'}</div> : null}
-                              </td>
-                            ) : null}
-                            <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-white">{l.username}</td>
-                            <td className="py-3 pr-4">
-                              <Badge variant={l.status === 'ACTIVE' ? 'success' : 'warning'}>
-                                {l.status === 'ACTIVE' ? 'ATIVA' : 'DESATIVADA'}
-                              </Badge>
-                            </td>
-                            <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">{l.connections}</td>
-                            <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">{toDateInput(l.expiresAt)}</td>
-                            <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">
-                              {l.packageId ? (packageById[l.packageId]?.name || l.package?.name || '-') : '-'}
-                            </td>
-                            <td className="py-3 pr-4">
-                              <div className="flex items-center gap-2 justify-end">
-                                <Button variant="outline" size="sm" onClick={() => openRenewLine(l)} disabled={isBillingBlocked}>
-                                  Renovar
-                                </Button>
-                                <Button variant="outline" size="sm" onClick={() => openLineSessions(l)}>
-                                  Conexões
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={!publicXcDnsBaseUrl}
-                                  onClick={() => {
-                                    setXcLinksLine(l);
-                                    setXcLinksPassword(linePasswordCacheRef.current.get(l.id) || '');
-                                    setXcLinksModalOpen(true);
-                                  }}
-                                >
-                                  Links XC
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  disabled={isBillingBlocked || resetLinePasswordMutation.isPending}
-                                  onClick={() => {
-                                    if (!confirm('Resetar a senha desta linha?')) return;
-                                    resetLinePasswordMutation.mutate(l);
-                                  }}
-                                >
-                                  Resetar senha
-                                </Button>
-                                <Button variant="outline" size="sm" onClick={() => openEditLine(l)} disabled={isBillingBlocked}>
-                                  Editar
-                                </Button>
-                                <Button
-                                  variant="danger"
-                                  size="sm"
-                                  disabled={isBillingBlocked}
-                                  onClick={() => {
-                                    if (!confirm('Remover esta linha?')) return;
-                                    deleteLineMutation.mutate(l.id);
-                                  }}
-                                >
-                                  Remover
-                                </Button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                        {!manageLinesLoading && manageLines.length === 0 ? (
-                          <tr>
-                            <td colSpan={clientsView === 'manage' && (isAdmin || isMaster) ? 7 : 6} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
-                              Nenhum cliente encontrado
-                            </td>
-                          </tr>
-                        ) : null}
-                      </>
-                    ) : (
-                      lines.map((l) => (
+                    {manageLinesLoading ? (
+                      <tr>
+                        <td colSpan={isAdmin || isMaster ? 7 : 6} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
+                          Carregando...
+                        </td>
+                      </tr>
+                    ) : null}
+                    {manageLines.map((l: any) => (
                       <tr key={l.id} className="border-t border-zinc-200/70 dark:border-zinc-800/70">
+                        {isAdmin || isMaster ? (
+                          <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">
+                            <div className="font-medium text-zinc-900 dark:text-white">{l.owner?.username || '-'}</div>
+                            {isAdmin ? <div className="text-xs text-zinc-600 dark:text-zinc-400">Master: {l.owner?.parent?.username || '-'}</div> : null}
+                          </td>
+                        ) : null}
                         <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-white">{l.username}</td>
                         <td className="py-3 pr-4">
                           <Badge variant={l.status === 'ACTIVE' ? 'success' : 'warning'}>
@@ -4145,8 +4073,12 @@ export function CoreXtreamPage() {
                         </td>
                         <td className="py-3 pr-4">
                           <div className="flex items-center gap-2 justify-end">
-                            <Button variant="outline" size="sm" onClick={() => openRenewLine(l)} disabled={isBillingBlocked}>Renovar</Button>
-                            <Button variant="outline" size="sm" onClick={() => openLineSessions(l)}>Conexões</Button>
+                            <Button variant="outline" size="sm" onClick={() => openRenewLine(l)} disabled={isBillingBlocked}>
+                              Renovar
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => openLineSessions(l)}>
+                              Conexões
+                            </Button>
                             <Button
                               variant="outline"
                               size="sm"
@@ -4170,7 +4102,9 @@ export function CoreXtreamPage() {
                             >
                               Resetar senha
                             </Button>
-                            <Button variant="outline" size="sm" onClick={() => openEditLine(l)} disabled={isBillingBlocked}>Editar</Button>
+                            <Button variant="outline" size="sm" onClick={() => openEditLine(l)} disabled={isBillingBlocked}>
+                              Editar
+                            </Button>
                             <Button
                               variant="danger"
                               size="sm"
@@ -4186,45 +4120,42 @@ export function CoreXtreamPage() {
                         </td>
                       </tr>
                     ))}
-                    {lines.length === 0 ? (
+                    {!manageLinesLoading && manageLines.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
-                          Nenhuma linha criada ainda
+                        <td colSpan={isAdmin || isMaster ? 7 : 6} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
+                          Nenhum cliente encontrado
                         </td>
                       </tr>
                     ) : null}
-                    )}
                   </tbody>
                 </table>
               </div>
 
-              {clientsView === 'manage' || (clientsView === 'my' && (isAdmin || isMaster)) ? (
-                <div className="flex flex-col md:flex-row items-center justify-between gap-2">
-                  <div className="text-sm text-zinc-600 dark:text-zinc-400">
-                    Página {manageLinesPagination.page} de {manageLinesPagination.totalPages} — {manageLinesPagination.total} registro(s)
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={manageLinesPagination.page <= 1}
-                      onClick={() => setManageLinesPage((p) => Math.max(1, p - 1))}
-                    >
-                      Anterior
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={manageLinesPagination.page >= manageLinesPagination.totalPages}
-                      onClick={() => setManageLinesPage((p) => Math.min(manageLinesPagination.totalPages, p + 1))}
-                    >
-                      Próxima
-                    </Button>
-                  </div>
+              <div className="flex flex-col md:flex-row items-center justify-between gap-2">
+                <div className="text-sm text-zinc-600 dark:text-zinc-400">
+                  Página {manageLinesPagination.page} de {manageLinesPagination.totalPages} — {manageLinesPagination.total} registro(s)
                 </div>
-              ) : null}
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={manageLinesPagination.page <= 1}
+                    onClick={() => setManageLinesPage((p) => Math.max(1, p - 1))}
+                  >
+                    Anterior
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={manageLinesPagination.page >= manageLinesPagination.totalPages}
+                    onClick={() => setManageLinesPage((p) => Math.min(manageLinesPagination.totalPages, p + 1))}
+                  >
+                    Próxima
+                  </Button>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
         </Card>
       ) : null}
 
