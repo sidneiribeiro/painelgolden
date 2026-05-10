@@ -227,6 +227,7 @@ const bouquetSchema = z.object({
   kind: z.enum(['LIVE', 'MOVIE', 'SERIES']).optional(),
   name: z.string().min(1),
   isActive: z.union([z.boolean(), z.string()]).transform(v => v === true || v === 'true' || v === undefined).optional(),
+  sortOrder: z.union([z.number(), z.string()]).transform(v => toInt(v, 0)).optional(),
   streamIds: z.array(z.string().uuid()).optional(),
 });
 
@@ -2666,7 +2667,7 @@ export const listBouquets = asyncHandler(async (req: Request, res: Response) => 
     include: {
       _count: { select: { streams: true, vodItems: true, series: true } },
     },
-    orderBy: [{ createdAt: 'desc' }],
+    orderBy: [{ kind: 'asc' }, { sortOrder: 'asc' }, { name: 'asc' }, { createdAt: 'asc' }],
   });
 
   res.json({ data: bouquets });
@@ -2681,12 +2682,20 @@ export const createBouquet = asyncHandler(async (req: Request, res: Response) =>
     throw new AppError(400, 'Categorias de Filmes/Séries não aceitam streamIds');
   }
 
+  const maxOrder = await prisma.coreBouquet.findFirst({
+    where: { ownerId: currentUser.userId, kind: kind as any },
+    orderBy: [{ sortOrder: 'desc' }, { createdAt: 'desc' }],
+    select: { sortOrder: true },
+  });
+  const sortOrder = (data as any).sortOrder !== undefined ? (data as any).sortOrder : (maxOrder?.sortOrder || 0) + 1;
+
   const bouquet = await prisma.coreBouquet.create({
     data: {
       ownerId: currentUser.userId,
       kind,
       name: data.name,
       isActive: data.isActive ?? true,
+      sortOrder,
     },
   });
 
@@ -2722,6 +2731,7 @@ export const updateBouquet = asyncHandler(async (req: Request, res: Response) =>
       kind: (data as any).kind ?? undefined,
       name: data.name ?? undefined,
       isActive: data.isActive ?? undefined,
+      sortOrder: (data as any).sortOrder ?? undefined,
     },
   });
 
@@ -2734,6 +2744,82 @@ export const updateBouquet = asyncHandler(async (req: Request, res: Response) =>
   }
 
   res.json({ data: updated });
+});
+
+export const moveBouquet = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const { id } = req.params;
+  const { direction } = z
+    .object({
+      direction: z.enum(['up', 'down', 'top', 'bottom']),
+    })
+    .parse(req.body);
+
+  const result = await prisma.$transaction(async (tx) => {
+    const current = await tx.coreBouquet.findFirst({
+      where: { id, ownerId: currentUser.userId },
+      select: { id: true, kind: true, sortOrder: true },
+    });
+    if (!current) throw new AppError(404, 'Categoria não encontrada');
+
+    const list = await tx.coreBouquet.findMany({
+      where: { ownerId: currentUser.userId, kind: current.kind as any },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+      select: { id: true, sortOrder: true },
+    });
+
+    const seen = new Set<number>();
+    let hasDup = false;
+    for (const b of list) {
+      if (seen.has(b.sortOrder)) {
+        hasDup = true;
+        break;
+      }
+      seen.add(b.sortOrder);
+    }
+    if (hasDup) {
+      let next = 1;
+      for (const b of list) {
+        if (b.sortOrder !== next) {
+          await tx.coreBouquet.update({ where: { id: b.id }, data: { sortOrder: next } });
+        }
+        next += 1;
+      }
+      for (let i = 0; i < list.length; i++) list[i].sortOrder = i + 1;
+    }
+
+    const idx = list.findIndex((b) => b.id === id);
+    if (idx === -1) throw new AppError(404, 'Categoria não encontrada');
+
+    if (direction === 'up' && idx > 0) {
+      const prev = list[idx - 1];
+      const cur = list[idx];
+      await tx.coreBouquet.update({ where: { id: cur.id }, data: { sortOrder: prev.sortOrder } });
+      await tx.coreBouquet.update({ where: { id: prev.id }, data: { sortOrder: cur.sortOrder } });
+      return { moved: true };
+    }
+    if (direction === 'down' && idx < list.length - 1) {
+      const next = list[idx + 1];
+      const cur = list[idx];
+      await tx.coreBouquet.update({ where: { id: cur.id }, data: { sortOrder: next.sortOrder } });
+      await tx.coreBouquet.update({ where: { id: next.id }, data: { sortOrder: cur.sortOrder } });
+      return { moved: true };
+    }
+    if (direction === 'top') {
+      const min = list.length ? Math.min(...list.map((b) => b.sortOrder)) : 0;
+      await tx.coreBouquet.update({ where: { id }, data: { sortOrder: min - 1 } });
+      return { moved: true };
+    }
+    if (direction === 'bottom') {
+      const max = list.length ? Math.max(...list.map((b) => b.sortOrder)) : 0;
+      await tx.coreBouquet.update({ where: { id }, data: { sortOrder: max + 1 } });
+      return { moved: true };
+    }
+
+    return { moved: false };
+  });
+
+  res.json({ ok: true, ...result });
 });
 
 export const removeBouquet = asyncHandler(async (req: Request, res: Response) => {

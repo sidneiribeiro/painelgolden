@@ -83,6 +83,7 @@ type CoreBouquet = {
   kind: 'LIVE' | 'MOVIE' | 'SERIES';
   name: string;
   isActive: boolean;
+  sortOrder: number;
   createdAt: string;
   _count?: { streams?: number; vodItems?: number; series?: number };
 };
@@ -1876,6 +1877,23 @@ export function CoreXtreamPage() {
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error || 'Erro ao remover categoria');
+    },
+  });
+
+  const moveBouquetMutation = useMutation({
+    mutationFn: async (payload: { id: string; direction: 'up' | 'down' | 'top' | 'bottom' }) => {
+      const res = await api.post(`/core/bouquets/${payload.id}/move`, { direction: payload.direction });
+      return res.data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['core-bouquets'] });
+      queryClient.invalidateQueries({ queryKey: ['core-packages'] });
+      queryClient.invalidateQueries({ queryKey: ['core-streams'] });
+      queryClient.invalidateQueries({ queryKey: ['core-vod'] });
+      queryClient.invalidateQueries({ queryKey: ['core-series'] });
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.error || 'Erro ao mover categoria');
     },
   });
 
@@ -4735,8 +4753,9 @@ export function CoreXtreamPage() {
               <thead>
                 <tr className="text-left text-zinc-600 dark:text-zinc-400">
                   <th className="py-2 pr-4">Nome</th>
+                  <th className="py-2 pr-4">Tipo</th>
                   <th className="py-2 pr-4">Status</th>
-                  <th className="py-2 pr-4">Streams</th>
+                  <th className="py-2 pr-4">Itens</th>
                   <th className="py-2 pr-4"></th>
                 </tr>
               </thead>
@@ -4744,12 +4763,33 @@ export function CoreXtreamPage() {
                 {bouquets.map((b) => (
                   <tr key={b.id} className="border-t border-zinc-200/70 dark:border-zinc-800/70">
                     <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-white">{b.name}</td>
+                    <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">
+                      {b.kind === 'LIVE' ? 'Streams' : b.kind === 'MOVIE' ? 'Filmes' : 'Séries'}
+                    </td>
                     <td className="py-3 pr-4">
                       <Badge variant={b.isActive ? 'success' : 'warning'}>{b.isActive ? 'ATIVO' : 'INATIVO'}</Badge>
                     </td>
-                    <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">{b._count?.streams ?? '-'}</td>
+                    <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">
+                      {b.kind === 'LIVE' ? (b._count?.streams ?? 0) : b.kind === 'MOVIE' ? (b._count?.vodItems ?? 0) : (b._count?.series ?? 0)}
+                    </td>
                     <td className="py-3 pr-4">
                       <div className="flex items-center gap-2 justify-end">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={isBillingBlocked || moveBouquetMutation.isPending}
+                          onClick={() => moveBouquetMutation.mutate({ id: b.id, direction: 'up' })}
+                        >
+                          ↑
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={isBillingBlocked || moveBouquetMutation.isPending}
+                          onClick={() => moveBouquetMutation.mutate({ id: b.id, direction: 'down' })}
+                        >
+                          ↓
+                        </Button>
                         <Button variant="outline" size="sm" onClick={() => openEditBouquet(b)} disabled={isBillingBlocked}>Editar</Button>
                         <Button
                           variant="danger"
@@ -4768,7 +4808,7 @@ export function CoreXtreamPage() {
                 ))}
                 {bouquets.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
+                    <td colSpan={5} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
                       Nenhum bouquet criado ainda
                     </td>
                   </tr>

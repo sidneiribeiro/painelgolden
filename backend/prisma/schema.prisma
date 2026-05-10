@@ -969,6 +969,7 @@ model CoreBouquet {
   kind      CoreBouquetKind @default(LIVE)
   name      String
   isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -981,6 +982,7 @@ model CoreBouquet {
   @@unique([ownerId, kind, name])
   @@index([ownerId])
   @@index([isActive])
+  @@index([ownerId, kind, sortOrder])
   @@map("core_bouquet")
 }
 

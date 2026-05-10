@@ -827,7 +827,7 @@ export const getPlayerApi = asyncHandler(async (req: Request, res: Response) => 
   const allowedBouquets = await prisma.corePackageBouquet.findMany({
     where: { packageId: line.packageId },
     include: {
-      bouquet: { select: { id: true, publicId: true, name: true, isActive: true } },
+      bouquet: { select: { id: true, publicId: true, name: true, isActive: true, kind: true, sortOrder: true } },
     },
   });
 
@@ -862,6 +862,7 @@ export const getPlayerApi = asyncHandler(async (req: Request, res: Response) => 
     return res.json(
       activeBouquets
         .filter(b => used.has(b.id))
+        .sort((a: any, b: any) => (a.sortOrder || 0) - (b.sortOrder || 0) || String(a.name).localeCompare(String(b.name)))
         .map((b) => ({
           category_id: String(b.publicId),
           category_name: b.name,
@@ -887,6 +888,7 @@ export const getPlayerApi = asyncHandler(async (req: Request, res: Response) => 
     return res.json(
       activeBouquets
         .filter(b => used.has(b.id))
+        .sort((a: any, b: any) => (a.sortOrder || 0) - (b.sortOrder || 0) || String(a.name).localeCompare(String(b.name)))
         .map((b) => ({
           category_id: String(b.publicId),
           category_name: b.name,
@@ -912,6 +914,7 @@ export const getPlayerApi = asyncHandler(async (req: Request, res: Response) => 
     return res.json(
       activeBouquets
         .filter(b => used.has(b.id))
+        .sort((a: any, b: any) => (a.sortOrder || 0) - (b.sortOrder || 0) || String(a.name).localeCompare(String(b.name)))
         .map((b) => ({
           category_id: String(b.publicId),
           category_name: b.name,
