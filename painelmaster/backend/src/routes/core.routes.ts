@@ -30,10 +30,12 @@ import {
   moveBouquet,
   resetCoreAll,
   listPackages,
+  listPackagesManage,
   createPackage,
   updatePackage,
   removePackage,
   listLines,
+  listLinesManage,
   createLine,
   updateLine,
   resetLinePassword,
@@ -127,11 +129,13 @@ router.delete('/bouquets/:id', coreAdminOnly, requireBillingValid, removeBouquet
 router.post('/reset', requireRole('SUPER_ADMIN', 'ADMIN'), requireBillingValid, resetCoreAll);
 
 router.get('/packages', listPackages);
+router.get('/packages/manage', listPackagesManage);
 router.post('/packages', coreAdminOnly, requireBillingValid, createPackage);
 router.put('/packages/:id', coreAdminOnly, requireBillingValid, updatePackage);
 router.delete('/packages/:id', coreAdminOnly, requireBillingValid, removePackage);
 
 router.get('/lines', listLines);
+router.get('/lines/manage', listLinesManage);
 router.post('/lines', requireBillingValid, createLine);
 router.put('/lines/:id', requireBillingValid, updateLine);
 router.post('/lines/:id/reset-password', requireBillingValid, resetLinePassword);

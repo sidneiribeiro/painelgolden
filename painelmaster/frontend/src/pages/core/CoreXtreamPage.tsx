@@ -115,12 +115,14 @@ type CorePackage = {
 
 type CoreLine = {
   id: string;
+  ownerId: string;
   username: string;
   status: 'ACTIVE' | 'DISABLED';
   connections: number;
   expiresAt: string;
   packageId: string | null;
   package?: { id: string; name: string } | null;
+  owner?: { id: string; username: string; role: string; parent?: { id: string; username: string } | null } | null;
   createdAt: string;
 };
 
@@ -616,6 +618,12 @@ export function CoreXtreamPage() {
   const [quickTestHours, setQuickTestHours] = useState(6);
   const [quickTestPackageId, setQuickTestPackageId] = useState<string>('');
   const [clientsTemplatesOpen, setClientsTemplatesOpen] = useState(false);
+  const [clientsView, setClientsView] = useState<'my' | 'manage'>('manage');
+  const [manageLinesPage, setManageLinesPage] = useState(1);
+  const [manageLinesPerPage, setManageLinesPerPage] = useState(50);
+  const [manageLinesSearch, setManageLinesSearch] = useState('');
+  const [manageLinesOwnerId, setManageLinesOwnerId] = useState('');
+  const debouncedManageLinesSearch = useDebounce(manageLinesSearch, 400);
   const [editingEpg, setEditingEpg] = useState<CoreEpgSource | null>(null);
   const [epgAutoMapData, setEpgAutoMapData] = useState<CoreEpgAutoMapResponse | null>(null);
   const [renewLine, setRenewLine] = useState<CoreLine | null>(null);
@@ -766,6 +774,7 @@ export function CoreXtreamPage() {
 
   const isBillingBlocked = !!billingInfoData?.data?.isBlocked;
   const isAdmin = currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'ADMIN';
+  const isMaster = currentUser?.role === 'MASTER_RESELLER';
   const canEditContent = isAdmin;
 
   const { data: panelSettingsData } = useQuery<{ data: { panelName: string; logoUrl: string | null; publicBaseUrl?: string | null } }>({
@@ -1110,6 +1119,47 @@ export function CoreXtreamPage() {
       const res = await api.get('/core/lines');
       return res.data;
     },
+    enabled: tab === 'lines' && clientsView === 'my' && !(isAdmin || isMaster),
+  });
+
+  const manageLinesQueryParams = useMemo(() => {
+    const page = manageLinesPage;
+    const perPage = manageLinesPerPage;
+    const search = String(debouncedManageLinesSearch || '').trim();
+    const ownerId = String(manageLinesOwnerId || '').trim();
+    return { page, perPage, search, ownerId };
+  }, [manageLinesPage, manageLinesPerPage, debouncedManageLinesSearch, manageLinesOwnerId]);
+
+  const { data: manageLinesData, isLoading: manageLinesLoading } = useQuery<{ data: CoreLine[]; pagination?: CorePagination }>({
+    queryKey: ['core-lines-manage', manageLinesQueryParams.page, manageLinesQueryParams.perPage, manageLinesQueryParams.search, manageLinesQueryParams.ownerId],
+    queryFn: async () => {
+      const params: any = { page: manageLinesQueryParams.page, perPage: manageLinesQueryParams.perPage };
+      if (manageLinesQueryParams.search) params.search = manageLinesQueryParams.search;
+      if (manageLinesQueryParams.ownerId) params.ownerId = manageLinesQueryParams.ownerId;
+      const res = await api.get('/core/lines/manage', { params });
+      return res.data;
+    },
+    enabled: tab === 'lines' && (clientsView === 'manage' || (clientsView === 'my' && (isAdmin || isMaster))),
+  });
+
+  const renewOwnerId = String((renewLine as any)?.ownerId || '').trim();
+  const { data: renewOwnerPackagesData, isLoading: renewOwnerPackagesLoading } = useQuery<{ data: CorePackage[] }>({
+    queryKey: ['core-packages-manage', renewOwnerId],
+    queryFn: async () => {
+      const res = await api.get('/core/packages/manage', { params: { ownerId: renewOwnerId } });
+      return res.data;
+    },
+    enabled: !!renewOwnerId && renewModalOpen,
+  });
+
+  const lineModalOwnerId = String((editingLine as any)?.ownerId || '').trim();
+  const { data: lineModalOwnerPackagesData, isLoading: lineModalOwnerPackagesLoading } = useQuery<{ data: CorePackage[] }>({
+    queryKey: ['core-packages-manage', lineModalOwnerId],
+    queryFn: async () => {
+      const res = await api.get('/core/packages/manage', { params: { ownerId: lineModalOwnerId } });
+      return res.data;
+    },
+    enabled: !!lineModalOwnerId && lineModalOpen && !!editingLine,
   });
 
   const vodQueryParams = useMemo(() => {
@@ -1292,7 +1342,18 @@ export function CoreXtreamPage() {
   const bouquetsForVod = useMemo(() => bouquets.filter((b) => b.kind === 'MOVIE'), [bouquets]);
   const bouquetsForSeries = useMemo(() => bouquets.filter((b) => b.kind === 'SERIES'), [bouquets]);
   const packages = packagesData?.data || [];
+  const renewOwnerPackages = renewOwnerPackagesData?.data || [];
+  const lineModalOwnerPackages = lineModalOwnerPackagesData?.data || [];
+  const packagesForRenew = renewOwnerPackages.length ? renewOwnerPackages : packages;
+  const packagesForLineModal = editingLine ? (lineModalOwnerPackages.length ? lineModalOwnerPackages : packages) : packages;
   const lines = linesData?.data || [];
+  const manageLines = manageLinesData?.data || [];
+  const manageLinesPagination: CorePagination = (manageLinesData as any)?.pagination || {
+    page: manageLinesQueryParams.page,
+    perPage: manageLinesQueryParams.perPage,
+    total: manageLines.length,
+    totalPages: 1,
+  };
   const vodItems = vodData?.data || [];
   const vodPagination: CorePagination = (vodData as any)?.pagination || {
     page: vodQueryParams.page,
@@ -1414,6 +1475,15 @@ export function CoreXtreamPage() {
   useEffect(() => {
     if (tab !== 'streams') setSelectedStreamIds([]);
   }, [tab]);
+
+  useEffect(() => {
+    if (tab !== 'lines') return;
+    if (clientsView !== 'manage' && clientsView !== 'my') setClientsView('manage');
+  }, [tab, isAdmin, isMaster]);
+
+  useEffect(() => {
+    setManageLinesPage(1);
+  }, [debouncedManageLinesSearch, manageLinesOwnerId]);
 
   useEffect(() => {
     setSelectedPaymentIds([]);
@@ -2032,6 +2102,7 @@ export function CoreXtreamPage() {
       toast.success('Pacote removido');
       queryClient.invalidateQueries({ queryKey: ['core-packages'] });
       queryClient.invalidateQueries({ queryKey: ['core-lines'] });
+      queryClient.invalidateQueries({ queryKey: ['core-lines-manage'] });
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error || 'Erro ao remover pacote');
@@ -2054,6 +2125,7 @@ export function CoreXtreamPage() {
     onSuccess: (result: any) => {
       toast.success('Linha criada');
       queryClient.invalidateQueries({ queryKey: ['core-lines'] });
+      queryClient.invalidateQueries({ queryKey: ['core-lines-manage'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       setLineModalOpen(false);
 
@@ -2097,6 +2169,7 @@ export function CoreXtreamPage() {
     onSuccess: ({ data, password }) => {
       toast.success('Teste criado');
       queryClient.invalidateQueries({ queryKey: ['core-lines'] });
+      queryClient.invalidateQueries({ queryKey: ['core-lines-manage'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       setQuickTestModalOpen(false);
 
@@ -2132,6 +2205,7 @@ export function CoreXtreamPage() {
     onSuccess: () => {
       toast.success('Linha atualizada');
       queryClient.invalidateQueries({ queryKey: ['core-lines'] });
+      queryClient.invalidateQueries({ queryKey: ['core-lines-manage'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       setLineModalOpen(false);
       if (editingLine?.id && lineForm.password) {
@@ -2169,6 +2243,7 @@ export function CoreXtreamPage() {
     onSuccess: () => {
       toast.success('Linha removida');
       queryClient.invalidateQueries({ queryKey: ['core-lines'] });
+      queryClient.invalidateQueries({ queryKey: ['core-lines-manage'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
     },
     onError: (error: any) => {
@@ -3747,12 +3822,31 @@ export function CoreXtreamPage() {
         <Card>
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Clientes</h3>
-            <div className="text-sm text-zinc-600 dark:text-zinc-400">{lines.length} cliente(s)</div>
+            <div className="text-sm text-zinc-600 dark:text-zinc-400">
+              {clientsView === 'manage' || isAdmin || isMaster ? `${manageLinesPagination.total} cliente(s)` : `${lines.length} cliente(s)`}
+            </div>
           </div>
 
           <div className="mt-4 grid grid-cols-1 lg:grid-cols-12 gap-3">
             <div className="lg:col-span-3">
               <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3 space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    variant={clientsView === 'manage' ? 'default' : 'outline'}
+                    onClick={() => setClientsView('manage')}
+                    className="w-full"
+                  >
+                    Gerir clientes
+                  </Button>
+                  <Button
+                    variant={clientsView === 'my' ? 'default' : 'outline'}
+                    onClick={() => setClientsView('my')}
+                    className="w-full"
+                  >
+                    Ferramentas
+                  </Button>
+                </div>
+
                 <Button onClick={openCreateLine} disabled={isBillingBlocked} className="w-full">
                   Novo Cliente
                 </Button>
@@ -3774,7 +3868,7 @@ export function CoreXtreamPage() {
             </div>
 
             <div className="lg:col-span-9 space-y-3">
-              {clientsTemplatesOpen ? (
+              {clientsView === 'my' && clientsTemplatesOpen ? (
                 <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3 space-y-3">
                   {publicCoreCheckoutUrl ? (
                     <div className="flex flex-col md:flex-row gap-2 md:items-end">
@@ -3901,10 +3995,46 @@ export function CoreXtreamPage() {
                 </div>
               ) : null}
 
+              {clientsView === 'manage' ? (
+                <div className="rounded-xl border border-zinc-200 dark:border-zinc-700 p-3 space-y-3">
+                  <div className="flex flex-col md:flex-row gap-2 md:items-end">
+                    <Input
+                      label="Pesquisar"
+                      placeholder="Buscar por usuário do cliente..."
+                      value={manageLinesSearch}
+                      onChange={(e) => setManageLinesSearch(e.target.value)}
+                    />
+                    <Select
+                      label="Por página"
+                      value={String(manageLinesPerPage)}
+                      onChange={(e) => setManageLinesPerPage(parseInt(e.target.value, 10))}
+                    >
+                      {[25, 50, 100, 200].map((n) => (
+                        <option key={n} value={String(n)}>
+                          {n}
+                        </option>
+                      ))}
+                    </Select>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setManageLinesSearch('');
+                          setManageLinesOwnerId('');
+                        }}
+                      >
+                        Limpar
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
                   <thead>
                     <tr className="text-left text-zinc-600 dark:text-zinc-400">
+                      {clientsView === 'manage' && (isAdmin || isMaster) ? <th className="py-2 pr-4">Revenda</th> : null}
                       <th className="py-2 pr-4">Usuário</th>
                       <th className="py-2 pr-4">Status</th>
                       <th className="py-2 pr-4">Conexões</th>
@@ -3914,7 +4044,93 @@ export function CoreXtreamPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {lines.map((l) => (
+                    {clientsView === 'manage' || (clientsView === 'my' && (isAdmin || isMaster)) ? (
+                      <>
+                        {manageLinesLoading ? (
+                          <tr>
+                            <td colSpan={clientsView === 'manage' && (isAdmin || isMaster) ? 7 : 6} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
+                              Carregando...
+                            </td>
+                          </tr>
+                        ) : null}
+                        {manageLines.map((l: any) => (
+                          <tr key={l.id} className="border-t border-zinc-200/70 dark:border-zinc-800/70">
+                            {clientsView === 'manage' && (isAdmin || isMaster) ? (
+                              <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">
+                                <div className="font-medium text-zinc-900 dark:text-white">{l.owner?.username || '-'}</div>
+                                {isAdmin ? <div className="text-xs text-zinc-600 dark:text-zinc-400">Master: {l.owner?.parent?.username || '-'}</div> : null}
+                              </td>
+                            ) : null}
+                            <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-white">{l.username}</td>
+                            <td className="py-3 pr-4">
+                              <Badge variant={l.status === 'ACTIVE' ? 'success' : 'warning'}>
+                                {l.status === 'ACTIVE' ? 'ATIVA' : 'DESATIVADA'}
+                              </Badge>
+                            </td>
+                            <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">{l.connections}</td>
+                            <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">{toDateInput(l.expiresAt)}</td>
+                            <td className="py-3 pr-4 text-zinc-700 dark:text-zinc-300">
+                              {l.packageId ? (packageById[l.packageId]?.name || l.package?.name || '-') : '-'}
+                            </td>
+                            <td className="py-3 pr-4">
+                              <div className="flex items-center gap-2 justify-end">
+                                <Button variant="outline" size="sm" onClick={() => openRenewLine(l)} disabled={isBillingBlocked}>
+                                  Renovar
+                                </Button>
+                                <Button variant="outline" size="sm" onClick={() => openLineSessions(l)}>
+                                  Conexões
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={!publicXcDnsBaseUrl}
+                                  onClick={() => {
+                                    setXcLinksLine(l);
+                                    setXcLinksPassword(linePasswordCacheRef.current.get(l.id) || '');
+                                    setXcLinksModalOpen(true);
+                                  }}
+                                >
+                                  Links XC
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={isBillingBlocked || resetLinePasswordMutation.isPending}
+                                  onClick={() => {
+                                    if (!confirm('Resetar a senha desta linha?')) return;
+                                    resetLinePasswordMutation.mutate(l);
+                                  }}
+                                >
+                                  Resetar senha
+                                </Button>
+                                <Button variant="outline" size="sm" onClick={() => openEditLine(l)} disabled={isBillingBlocked}>
+                                  Editar
+                                </Button>
+                                <Button
+                                  variant="danger"
+                                  size="sm"
+                                  disabled={isBillingBlocked}
+                                  onClick={() => {
+                                    if (!confirm('Remover esta linha?')) return;
+                                    deleteLineMutation.mutate(l.id);
+                                  }}
+                                >
+                                  Remover
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                        {!manageLinesLoading && manageLines.length === 0 ? (
+                          <tr>
+                            <td colSpan={clientsView === 'manage' && (isAdmin || isMaster) ? 7 : 6} className="py-10 text-center text-zinc-600 dark:text-zinc-400">
+                              Nenhum cliente encontrado
+                            </td>
+                          </tr>
+                        ) : null}
+                      </>
+                    ) : (
+                      lines.map((l) => (
                       <tr key={l.id} className="border-t border-zinc-200/70 dark:border-zinc-800/70">
                         <td className="py-3 pr-4 font-medium text-zinc-900 dark:text-white">{l.username}</td>
                         <td className="py-3 pr-4">
@@ -3977,9 +4193,36 @@ export function CoreXtreamPage() {
                         </td>
                       </tr>
                     ) : null}
+                    )}
                   </tbody>
                 </table>
               </div>
+
+              {clientsView === 'manage' || (clientsView === 'my' && (isAdmin || isMaster)) ? (
+                <div className="flex flex-col md:flex-row items-center justify-between gap-2">
+                  <div className="text-sm text-zinc-600 dark:text-zinc-400">
+                    Página {manageLinesPagination.page} de {manageLinesPagination.totalPages} — {manageLinesPagination.total} registro(s)
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={manageLinesPagination.page <= 1}
+                      onClick={() => setManageLinesPage((p) => Math.max(1, p - 1))}
+                    >
+                      Anterior
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={manageLinesPagination.page >= manageLinesPagination.totalPages}
+                      onClick={() => setManageLinesPage((p) => Math.min(manageLinesPagination.totalPages, p + 1))}
+                    >
+                      Próxima
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
         </Card>
@@ -6463,7 +6706,12 @@ export function CoreXtreamPage() {
             onChange={(e) => setRenewPackageId(e.target.value)}
           >
             <option value="">Selecione</option>
-            {packages
+            {renewOwnerPackagesLoading ? (
+              <option value="" disabled>
+                Carregando pacotes...
+              </option>
+            ) : null}
+            {packagesForRenew
               .filter((p) => p.isActive)
               .map((p) => (
                 <option key={p.id} value={p.id}>
@@ -8875,7 +9123,12 @@ export function CoreXtreamPage() {
             onChange={(e) => setLineForm((p) => ({ ...p, packageId: e.target.value }))}
           >
             <option value="">(sem pacote)</option>
-            {packages.map((p) => (
+            {lineModalOwnerPackagesLoading ? (
+              <option value="" disabled>
+                Carregando pacotes...
+              </option>
+            ) : null}
+            {packagesForLineModal.map((p) => (
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </Select>

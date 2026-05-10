@@ -131,6 +131,46 @@ function coreOwnerWhere(user: { userId: string; role: string }) {
   return { ownerId: user.userId };
 }
 
+async function getDescendantUserIds(rootUserId: string) {
+  const visited = new Set<string>();
+  const result: string[] = [];
+  let frontier: string[] = [rootUserId];
+
+  while (frontier.length) {
+    const parents = frontier.filter((id) => !visited.has(id));
+    frontier = [];
+    if (!parents.length) break;
+    for (const id of parents) visited.add(id);
+
+    const children = await prisma.user.findMany({
+      where: { parentId: { in: parents } },
+      select: { id: true },
+    });
+    const childIds = children.map((c) => c.id);
+    for (const id of childIds) {
+      if (!visited.has(id)) result.push(id);
+    }
+    frontier = childIds;
+  }
+
+  return result;
+}
+
+async function getCoreManageOwnerIds(user: { userId: string; role: string }) {
+  if (user.role === 'SUPER_ADMIN' || user.role === 'ADMIN') return null as string[] | null;
+  if (user.role === 'MASTER_RESELLER') {
+    const descendantIds = await getDescendantUserIds(user.userId);
+    return [user.userId, ...descendantIds];
+  }
+  return [user.userId];
+}
+
+async function assertCanManageCoreOwner(user: { userId: string; role: string }, ownerId: string) {
+  const allowed = await getCoreManageOwnerIds(user);
+  if (!allowed) return;
+  if (!allowed.includes(ownerId)) throw new AppError(403, 'Sem permissão para gerir este usuário');
+}
+
 const toInt = (val: any, defaultVal: number): number => {
   if (typeof val === 'number') return Math.trunc(val);
   if (typeof val === 'string' && val.trim() !== '') {
@@ -2892,6 +2932,30 @@ export const listPackages = asyncHandler(async (req: Request, res: Response) => 
   });
 });
 
+export const listPackagesManage = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+  const q = z.object({ ownerId: z.string().uuid() }).parse(req.query);
+
+  await assertCanManageCoreOwner(currentUser, q.ownerId);
+
+  const packages = await prisma.corePackage.findMany({
+    where: { ownerId: q.ownerId },
+    include: {
+      bouquets: { include: { bouquet: { select: { id: true, name: true } } } },
+      _count: { select: { lines: true } },
+    },
+    orderBy: [{ createdAt: 'desc' }],
+  });
+
+  res.json({
+    data: packages.map(p => ({
+      ...p,
+      bouquetIds: p.bouquets.map(b => b.bouquetId),
+      bouquets: p.bouquets.map(b => b.bouquet),
+    })),
+  });
+});
+
 export const createPackage = asyncHandler(async (req: Request, res: Response) => {
   const currentUser = req.user!;
   const data = packageSchema.parse(req.body);
@@ -2993,6 +3057,54 @@ export const listLines = asyncHandler(async (req: Request, res: Response) => {
   });
 });
 
+export const listLinesManage = asyncHandler(async (req: Request, res: Response) => {
+  const currentUser = req.user!;
+
+  const q = z
+    .object({
+      page: z.coerce.number().int().min(1).default(1),
+      perPage: z.coerce.number().int().min(10).max(200).default(50),
+      search: z.string().optional(),
+      status: z.enum(['ACTIVE', 'DISABLED']).optional(),
+      ownerId: z.string().uuid().optional(),
+    })
+    .parse(req.query);
+
+  const allowedOwnerIds = await getCoreManageOwnerIds(currentUser);
+
+  const where: any = {};
+  if (allowedOwnerIds) where.ownerId = { in: allowedOwnerIds };
+  if (q.ownerId) {
+    if (allowedOwnerIds && !allowedOwnerIds.includes(q.ownerId)) throw new AppError(403, 'Sem permissão para este usuário');
+    where.ownerId = q.ownerId;
+  }
+  if (q.status) where.status = q.status;
+  if (q.search && String(q.search).trim()) {
+    where.username = { contains: String(q.search).trim(), mode: 'insensitive' };
+  }
+
+  const total = await prisma.coreLine.count({ where });
+  const totalPages = Math.max(1, Math.ceil(total / q.perPage));
+  const page = Math.min(q.page, totalPages);
+  const skip = (page - 1) * q.perPage;
+
+  const lines = await prisma.coreLine.findMany({
+    where,
+    include: {
+      package: { select: { id: true, name: true, connections: true, durationDays: true } },
+      owner: { select: { id: true, username: true, role: true, parent: { select: { id: true, username: true } } } },
+    },
+    orderBy: [{ createdAt: 'desc' }],
+    take: q.perPage,
+    skip,
+  });
+
+  res.json({
+    data: lines.map((l: any) => ({ ...l, passwordHash: undefined })),
+    pagination: { page, perPage: q.perPage, total, totalPages },
+  });
+});
+
 export const createLine = asyncHandler(async (req: Request, res: Response) => {
   const currentUser = req.user!;
   const data = lineSchema.parse(req.body);
@@ -3034,16 +3146,15 @@ export const updateLine = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
   const data = lineSchema.partial().extend({ password: z.string().min(4).max(128).optional() }).parse(req.body);
 
-  const line = await prisma.coreLine.findFirst({
-    where: { id, ...coreOwnerWhere(currentUser) },
-  });
+  const line = await prisma.coreLine.findFirst({ where: { id } });
   if (!line) throw new AppError(404, 'Linha não encontrada');
+  await assertCanManageCoreOwner(currentUser, line.ownerId);
 
   if (data.expiresAt && isNaN(data.expiresAt.getTime())) throw new AppError(400, 'expiresAt inválido');
 
   if (data.packageId !== undefined && data.packageId !== null) {
     const pkg = await prisma.corePackage.findFirst({
-      where: { id: data.packageId, ...coreOwnerWhere(currentUser) },
+      where: { id: data.packageId, ownerId: line.ownerId },
       select: { id: true },
     });
     if (!pkg) throw new AppError(404, 'Pacote não encontrado');
@@ -3074,10 +3185,11 @@ export const resetLinePassword = asyncHandler(async (req: Request, res: Response
   const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
 
   const line = await prisma.coreLine.findFirst({
-    where: { id, ...coreOwnerWhere(currentUser) },
-    select: { id: true, username: true },
+    where: { id },
+    select: { id: true, username: true, ownerId: true },
   });
   if (!line) throw new AppError(404, 'Linha não encontrada');
+  await assertCanManageCoreOwner(currentUser, line.ownerId);
 
   const newPassword = crypto.randomBytes(8).toString('hex');
   const passwordHash = await bcrypt.hash(newPassword, 10);
@@ -3114,9 +3226,10 @@ export const removeLine = asyncHandler(async (req: Request, res: Response) => {
   const { id } = req.params;
 
   const line = await prisma.coreLine.findFirst({
-    where: { id, ...coreOwnerWhere(currentUser) },
+    where: { id },
   });
   if (!line) throw new AppError(404, 'Linha não encontrada');
+  await assertCanManageCoreOwner(currentUser, line.ownerId);
 
   await prisma.coreLine.delete({ where: { id } });
   res.json({ ok: true });
@@ -3769,10 +3882,11 @@ export const createCoreRenewPayment = asyncHandler(async (req: Request, res: Res
   const input = coreRenewPaymentSchema.parse(req.body);
 
   const line = await prisma.coreLine.findFirst({
-    where: { id: input.lineId, ...coreOwnerWhere(currentUser) },
+    where: { id: input.lineId },
     select: { id: true, ownerId: true, username: true, expiresAt: true, connections: true },
   });
   if (!line) throw new AppError(404, 'Linha não encontrada');
+  await assertCanManageCoreOwner(currentUser, line.ownerId);
 
   const pkg = await prisma.corePackage.findFirst({
     where: { id: input.packageId, ownerId: line.ownerId, isActive: true },
