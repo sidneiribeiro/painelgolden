@@ -93,8 +93,12 @@ if [[ $APPLY_EDGE_ALLOWLIST -eq 1 ]]; then
   exit 0
 fi
 
-read_var DOMAIN         "Domínio público (ex.: painel.cliente.com)" ""
-read_var EMAIL          "Email para Let's Encrypt" ""
+AUTO_IP="$(curl -4fsS https://api.ipify.org 2>/dev/null || curl -4fsS https://ifconfig.me 2>/dev/null || true)"
+read_var PUBLIC_IP      "IP público (ex.: 191.96.12.34)" "${AUTO_IP}"
+read_var DOMAIN         "Domínio público (opcional, ex.: painel.cliente.com)" ""
+if [[ $ENABLE_SSL -eq 1 ]]; then
+  read_var EMAIL        "Email para Let's Encrypt" ""
+fi
 read_var ADMIN_USERNAME "Usuário SUPER_ADMIN inicial" "admin"
 read_var ADMIN_EMAIL    "Email do SUPER_ADMIN" "admin@${DOMAIN:-painelmaster.local}"
 read_var ADMIN_PASSWORD "Senha SUPER_ADMIN (enter = aleatória)" ""
@@ -123,9 +127,30 @@ if [[ ! -f .env ]]; then
   sed -i "s#TROQUE_NO_PRIMEIRO_LOGIN#${ADMIN_PASSWORD}#g"   .env
   sed -i "s#SEED_ADMIN_USERNAME=admin#SEED_ADMIN_USERNAME=${ADMIN_USERNAME}#g" .env
   sed -i "s#admin@seudominio.com#${ADMIN_EMAIL}#g" .env
+  if [[ $ENABLE_SSL -eq 1 && -z "$DOMAIN" ]]; then
+    err "--ssl requer DOMAIN (domínio apontado para este servidor)."
+    exit 1
+  fi
 
+  ROOT_DOMAIN="$DOMAIN"
+  if [[ -n "$DOMAIN" && "$DOMAIN" == *.*.* ]]; then
+    ROOT_DOMAIN="${DOMAIN#*.}"
+  fi
+  BASE_URL="http://${PUBLIC_IP}"
   if [[ -n "$DOMAIN" ]]; then
-    sed -i "s#painel.seudominio.com#${DOMAIN}#g" .env
+    if [[ $ENABLE_SSL -eq 1 ]]; then BASE_URL="https://${DOMAIN}"; else BASE_URL="http://${DOMAIN}"; fi
+  fi
+  ORIGINS="${BASE_URL}"
+  if [[ -n "$DOMAIN" ]]; then
+    if [[ $ENABLE_SSL -eq 1 ]]; then ORIGINS="${BASE_URL},https://*.${ROOT_DOMAIN}"; else ORIGINS="${BASE_URL},http://*.${ROOT_DOMAIN}"; fi
+  fi
+
+  sed -i "s#^FRONTEND_URL=.*#FRONTEND_URL=${BASE_URL}#g" .env
+  sed -i "s#^API_URL=.*#API_URL=${BASE_URL}/api#g" .env
+  if grep -q '^ALLOWED_ORIGINS=' .env; then
+    sed -i "s#^ALLOWED_ORIGINS=.*#ALLOWED_ORIGINS=${ORIGINS}#g" .env
+  else
+    echo "ALLOWED_ORIGINS=${ORIGINS}" >> .env
   fi
 
   if [[ $ENABLE_SSL -eq 0 ]]; then
