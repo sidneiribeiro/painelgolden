@@ -8660,9 +8660,63 @@ export function CoreXtreamPage() {
             ))}
           </Select>
 
-          <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 p-4 text-sm text-zinc-700 dark:text-zinc-300">
-            M3U: <span className="font-medium">/get.php?username=USUARIO&amp;password=SENHA</span>
-          </div>
+          {publicXcDnsBaseUrl ? (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 p-3 text-sm text-zinc-700 dark:text-zinc-300">
+                Templates rápidos (XC). Preencha usuário/senha para gerar os links completos.
+              </div>
+              {(() => {
+                const u = String(lineForm.username || '').trim();
+                const uVal = u ? encodeURIComponent(u) : '{username}';
+                const pVal = lineForm.password ? encodeURIComponent(String(lineForm.password)) : '{password}';
+                const m3uTs = `${publicXcDnsBaseUrl}/get.php?username=${uVal}&password=${pVal}&type=m3u_plus&output=ts`;
+                const m3uHls = `${publicXcDnsBaseUrl}/get.php?username=${uVal}&password=${pVal}&type=m3u_plus&output=m3u8`;
+                const xmltv = `${publicXcDnsBaseUrl}/xmltv.php?username=${uVal}&password=${pVal}`;
+                const playerApi = `${publicXcDnsBaseUrl}/player_api.php?username=${uVal}&password=${pVal}`;
+                const items = [
+                  { label: 'M3U (TS)', value: m3uTs },
+                  { label: 'M3U (HLS)', value: m3uHls },
+                  { label: 'XMLTV', value: xmltv },
+                  { label: 'XC API', value: playerApi },
+                ];
+                return (
+                  <div className="space-y-2">
+                    {items.map((it) => (
+                      <div key={it.label} className="rounded-lg border border-zinc-200 dark:border-zinc-700 p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-sm font-medium text-zinc-900 dark:text-white">{it.label}</div>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={async () => {
+                                try {
+                                  await navigator.clipboard.writeText(it.value);
+                                  toast.success('Copiado!');
+                                } catch {
+                                  toast.error('Erro ao copiar. Copie manualmente.');
+                                }
+                              }}
+                            >
+                              Copiar
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => window.open(it.value, '_blank', 'noopener,noreferrer')}>
+                              Abrir
+                            </Button>
+                          </div>
+                        </div>
+                        <Input value={it.value} readOnly onClick={(e) => (e.target as HTMLInputElement).select()} />
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 p-4 text-sm text-zinc-700 dark:text-zinc-300">
+              XC Base (DNS) indisponível.
+            </div>
+          )}
 
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setLineModalOpen(false)}>Cancelar</Button>
