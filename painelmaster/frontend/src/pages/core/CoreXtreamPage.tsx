@@ -556,6 +556,19 @@ const sumNumbers = (values: Array<number | null | undefined>) => {
   return sum;
 };
 
+const randomHex = (bytes: number) => {
+  const n = Math.max(1, Math.floor(bytes));
+  const arr = new Uint8Array(n);
+  try {
+    crypto.getRandomValues(arr);
+  } catch {
+    for (let i = 0; i < arr.length; i++) arr[i] = Math.floor(Math.random() * 256);
+  }
+  return Array.from(arr)
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+};
+
 export function CoreXtreamPage() {
   const queryClient = useQueryClient();
   const currentUser = useAuthStore((s) => s.user);
@@ -598,6 +611,10 @@ export function CoreXtreamPage() {
   const [xcLinksLine, setXcLinksLine] = useState<CoreLine | null>(null);
   const [xcLinksPassword, setXcLinksPassword] = useState<string>('');
   const linePasswordCacheRef = useRef<Map<string, string>>(new Map());
+  const [quickTestModalOpen, setQuickTestModalOpen] = useState(false);
+  const [quickTestTemplate, setQuickTestTemplate] = useState<'complete' | 'no_adult' | 'custom'>('complete');
+  const [quickTestHours, setQuickTestHours] = useState(6);
+  const [quickTestPackageId, setQuickTestPackageId] = useState<string>('');
   const [editingEpg, setEditingEpg] = useState<CoreEpgSource | null>(null);
   const [epgAutoMapData, setEpgAutoMapData] = useState<CoreEpgAutoMapResponse | null>(null);
   const [renewLine, setRenewLine] = useState<CoreLine | null>(null);
@@ -1423,6 +1440,21 @@ export function CoreXtreamPage() {
     return servers.filter((s) => s.isActive && !!((s.domain || '').trim() || (s.ip || '').trim())).length;
   }, [servers]);
 
+  const pickQuickTestPackageId = useMemo(() => {
+    const active = packages.filter((p) => p.isActive);
+    if (!active.length) return '';
+    const norm = (s: any) => String(s || '').toLowerCase();
+    if (quickTestTemplate === 'no_adult') {
+      const match = active.find((p) => norm(p.name).includes('sem adulto') || norm(p.name).includes('no adult'));
+      return match?.id || active[0].id;
+    }
+    if (quickTestTemplate === 'complete') {
+      const match = active.find((p) => norm(p.name).includes('completo') && !norm(p.name).includes('sem adulto') && !norm(p.name).includes('no adult'));
+      return match?.id || active[0].id;
+    }
+    return quickTestPackageId || active[0].id;
+  }, [packages, quickTestTemplate, quickTestPackageId]);
+
   const serverStatusById = useMemo(() => {
     const map: Record<string, CoreEdgeServersStatusResponse['data']['results'][number]> = {};
     for (const r of serversStatusData?.data?.results || []) map[r.serverId] = r;
@@ -2037,6 +2069,48 @@ export function CoreXtreamPage() {
     },
     onError: (error: any) => {
       toast.error(error.response?.data?.error || 'Erro ao criar linha');
+    },
+  });
+
+  const quickTestLineMutation = useMutation({
+    mutationFn: async () => {
+      const pkgId = quickTestTemplate === 'custom' ? (quickTestPackageId || pickQuickTestPackageId) : pickQuickTestPackageId;
+      if (packages.filter((p) => p.isActive).length > 0 && !pkgId) {
+        throw new Error('Selecione um pacote');
+      }
+
+      const username = `teste${randomHex(3)}`;
+      const password = randomHex(6);
+      const expiresAt = new Date(Date.now() + Math.max(1, quickTestHours) * 60 * 60 * 1000).toISOString();
+      const payload: any = {
+        username,
+        password,
+        expiresAt,
+        connections: 1,
+        status: 'ACTIVE',
+        packageId: pkgId || null,
+      };
+      const res = await api.post('/core/lines', payload);
+      return { data: res.data, password };
+    },
+    onSuccess: ({ data, password }) => {
+      toast.success('Teste criado');
+      queryClient.invalidateQueries({ queryKey: ['core-lines'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      setQuickTestModalOpen(false);
+
+      const createdLine = (data?.data || null) as CoreLine | null;
+      if (createdLine?.id && password) {
+        linePasswordCacheRef.current.set(createdLine.id, password);
+      }
+      if (createdLine && password) {
+        setXcLinksLine(createdLine);
+        setXcLinksPassword(password);
+        setXcLinksModalOpen(true);
+      }
+    },
+    onError: (error: any) => {
+      toast.error(error?.message || error.response?.data?.error || 'Erro ao criar teste');
     },
   });
 
@@ -3674,6 +3748,9 @@ export function CoreXtreamPage() {
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-white">Clientes</h3>
             <div className="flex items-center gap-2">
               <Button variant="outline" onClick={openSale} disabled={isBillingBlocked}>Vender Cliente</Button>
+              <Button variant="outline" onClick={() => setQuickTestModalOpen(true)} disabled={isBillingBlocked || packages.filter((p) => p.isActive).length === 0}>
+                Gerar Teste
+              </Button>
               <Button onClick={openCreateLine} disabled={isBillingBlocked}>Novo Cliente</Button>
             </div>
           </div>
@@ -6037,6 +6114,79 @@ export function CoreXtreamPage() {
       ) : null}
 
       <Modal
+        isOpen={quickTestModalOpen}
+        onClose={() => setQuickTestModalOpen(false)}
+        title="🧪 Gerar Teste"
+        size="lg"
+      >
+        <div className="space-y-4">
+          <Select
+            label="Modelo"
+            value={quickTestTemplate}
+            onChange={(e) => setQuickTestTemplate(e.target.value as any)}
+          >
+            <option value="complete">Completo</option>
+            <option value="no_adult">Completo sem adulto</option>
+            <option value="custom">Escolher pacote</option>
+          </Select>
+
+          {quickTestTemplate === 'custom' ? (
+            <Select
+              label="Pacote"
+              value={quickTestPackageId}
+              onChange={(e) => setQuickTestPackageId(e.target.value)}
+            >
+              <option value="">Selecione</option>
+              {packages
+                .filter((p) => p.isActive)
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+            </Select>
+          ) : (
+            <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 p-3 text-sm text-zinc-700 dark:text-zinc-300">
+              Pacote: <span className="font-medium">{packageById[pickQuickTestPackageId]?.name || '-'}</span>
+            </div>
+          )}
+
+          <div>
+            <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-2">Duração do Teste</div>
+            <div className="flex gap-2 flex-wrap">
+              {[3, 6, 12, 24].map((h) => (
+                <button
+                  key={h}
+                  type="button"
+                  onClick={() => setQuickTestHours(h)}
+                  className={`flex-1 py-3 rounded-lg text-sm font-medium transition-colors ${
+                    quickTestHours === h
+                      ? 'bg-blue-600 dark:bg-cyan-500 text-white'
+                      : 'bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-400 hover:bg-zinc-300 dark:hover:bg-zinc-700'
+                  }`}
+                >
+                  {h}h
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setQuickTestModalOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => quickTestLineMutation.mutate()}
+              loading={quickTestLineMutation.isPending}
+              disabled={isBillingBlocked}
+            >
+              Gerar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
         isOpen={sessionsModalOpen}
         onClose={() => {
           setSessionsModalOpen(false);
@@ -6194,6 +6344,59 @@ export function CoreXtreamPage() {
                       <Input value={it.value} readOnly onClick={(e) => (e.target as HTMLInputElement).select()} />
                     </div>
                   ))}
+
+                  <div className="rounded-lg border border-zinc-200 dark:border-zinc-700 p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm font-medium text-zinc-900 dark:text-white">Mensagem (WhatsApp)</div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={async () => {
+                          const exp = xcLinksLine?.expiresAt ? toDateInput(xcLinksLine.expiresAt) : '-';
+                          const msg = [
+                            'Olá! Segue seu acesso IPTV:',
+                            `Servidor: ${publicXcDnsBaseUrl}`,
+                            `Usuário: ${u || '-'}`,
+                            `Senha: ${xcLinksPassword || '-'}`,
+                            `Expira: ${exp}`,
+                            `Conexões: ${String(xcLinksLine?.connections ?? '-')}`,
+                            '',
+                            `M3U (TS): ${m3uTs}`,
+                            `M3U (HLS): ${m3uHls}`,
+                            `XMLTV: ${xmltv}`,
+                            `XC API: ${playerApi}`,
+                          ].join('\n');
+                          try {
+                            await navigator.clipboard.writeText(msg);
+                            toast.success('Copiado!');
+                          } catch {
+                            toast.error('Erro ao copiar. Copie manualmente.');
+                          }
+                        }}
+                      >
+                        Copiar
+                      </Button>
+                    </div>
+                    <textarea
+                      readOnly
+                      value={[
+                        'Olá! Segue seu acesso IPTV:',
+                        `Servidor: ${publicXcDnsBaseUrl}`,
+                        `Usuário: ${u || '-'}`,
+                        `Senha: ${xcLinksPassword || '-'}`,
+                        `Expira: ${xcLinksLine?.expiresAt ? toDateInput(xcLinksLine.expiresAt) : '-'}`,
+                        `Conexões: ${String(xcLinksLine?.connections ?? '-')}`,
+                        '',
+                        `M3U (TS): ${m3uTs}`,
+                        `M3U (HLS): ${m3uHls}`,
+                        `XMLTV: ${xmltv}`,
+                        `XC API: ${playerApi}`,
+                      ].join('\n')}
+                      onClick={(e) => (e.target as HTMLTextAreaElement).select()}
+                      className="w-full p-3 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm font-mono text-zinc-900 dark:text-white resize-none cursor-pointer"
+                      rows={8}
+                    />
+                  </div>
                 </div>
               );
             })()
