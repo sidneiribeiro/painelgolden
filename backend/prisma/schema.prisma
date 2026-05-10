@@ -899,6 +899,7 @@ model CoreStream {
   owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   bouquets  CoreBouquetStream[]
   edgeServers CoreStreamEdgeServer[]
+  upstreams CoreStreamUpstreamHealth[]
 
   @@index([ownerId])
   @@index([isActive])
