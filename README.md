@@ -38,7 +38,7 @@ sudo DOMAIN=painel.cliente.com EMAIL=admin@cliente.com \
 O instalador:
 - Instala Docker Engine + Compose
 - Gera `.env` com secrets aleatórios seguros
-- Sobe `mysql`, `redis`, `backend`, `frontend`
+- Sobe `postgres`, `redis`, `backend`, `frontend`
 - Configura `nginx` de host + SSL (opcional via certbot)
 - Cria o usuário **SUPER_ADMIN** inicial (senha exibida ao final)
 
@@ -50,14 +50,30 @@ docker compose build
 docker compose up -d
 ```
 
+## Instalação local (Windows/Mac)
+Pré-requisito: Docker Desktop (com Docker Compose v2).
+
+PowerShell (na pasta `painelmaster/`):
+```powershell
+Copy-Item .env.example .env
+# Edite o .env (pelo menos: POSTGRES_PASSWORD, JWT_SECRET, JWT_REFRESH_SECRET, ENCRYPTION_KEY,
+# FRONTEND_URL, API_URL, ALLOWED_ORIGINS, SEED_ADMIN_*)
+docker compose build
+docker compose up -d
+```
+
+Acessos locais:
+- Frontend: `http://localhost:8080`
+- Healthcheck da API: `http://localhost:3001/api/health` (ou `http://localhost:8080/api/health`)
+
 ## Variáveis de ambiente
 Arquivo único `.env` na raiz (todas descritas em `.env.example`).
 
 ### Obrigatórias
 | Variável | Descrição |
 |---|---|
-| `MYSQL_ROOT_PASSWORD` / `MYSQL_PASSWORD` | Senhas do MySQL containerizado |
-| `DATABASE_URL` | `mysql://USER:PASS@mysql:3306/DB` |
+| `POSTGRES_PASSWORD` | Senha do PostgreSQL containerizado |
+| `DATABASE_URL` | `postgresql://USER:PASS@postgres:5432/DB?schema=public` |
 | `JWT_SECRET`, `JWT_REFRESH_SECRET` | Segredos JWT (32+ bytes hex) |
 | `ENCRYPTION_KEY` | Chave para cifrar credenciais no banco (32 chars) |
 | `FRONTEND_URL`, `API_URL` | URLs públicas finais |
@@ -74,7 +90,7 @@ Navegador → nginx (host, 80/443) → frontend:8080 (SPA)
                                  → backend:3001 (Express + Prisma + Socket.io)
                                             ↓
                                   ┌─────────┴─────────┐
-                                  mysql:3306      redis:6379
+                                postgres:5432    redis:6379
                                   (painel)        (cache)
 
 Backend também conecta a:
@@ -85,7 +101,7 @@ Backend também conecta a:
 ## Stack técnica
 - **Backend**: Node.js 20 + TypeScript + Express + Prisma + Socket.io
 - **Frontend**: React 18 + TypeScript + Vite + Tailwind + Zustand + React Query
-- **Banco**: MySQL 8.0 (Prisma)
+- **Banco**: PostgreSQL 16 (Prisma)
 - **Cache**: Redis 7
 - **Infra**: Docker Compose + nginx + (opcional) certbot
 
@@ -106,8 +122,8 @@ docker compose ps
 docker compose logs -f backend
 docker compose logs -f frontend
 
-# Acessar shell do MySQL
-docker compose exec mysql mysql -uroot -p$MYSQL_ROOT_PASSWORD painelmaster
+# Acessar shell do PostgreSQL
+docker compose exec postgres psql -U $POSTGRES_USER -d $POSTGRES_DB
 
 # Prisma Studio (dev)
 docker compose exec backend npx prisma studio
@@ -136,7 +152,7 @@ docker compose up -d
 ```bash
 docker compose logs backend | tail -100
 ```
-Geralmente é `DATABASE_URL` incorreta ou porta 3306 ocupada.
+Geralmente é `DATABASE_URL` incorreta ou porta 5432 ocupada.
 
 **Frontend em branco**
 Rebuildar com a `VITE_API_URL` correta:
