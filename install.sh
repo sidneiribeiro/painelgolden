@@ -92,15 +92,10 @@ if [[ $APPLY_EDGE_ALLOWLIST -eq 1 ]]; then
   exit 0
 fi
 
-read_var DOMAIN         "Domínio público (ex.: painel.cliente.com)" ""
-read_var ADMIN_USERNAME "Usuário SUPER_ADMIN inicial" "admin"
-read_var ADMIN_EMAIL    "Email do SUPER_ADMIN" "admin@${DOMAIN:-painelmaster.local}"
-read_var ADMIN_PASSWORD "Senha SUPER_ADMIN (enter = aleatória)" ""
-
-if [[ -z "$ADMIN_PASSWORD" ]]; then
-  ADMIN_PASSWORD="$(openssl rand -base64 16 | tr -d '=+/' | cut -c1-16)"
-  warn "Senha gerada automaticamente: $ADMIN_PASSWORD"
-fi
+DOMAIN=""
+ADMIN_USERNAME="admin"
+ADMIN_EMAIL="admin@admin.com"
+ADMIN_PASSWORD="admin123"
 
 # 3. Gerar .env
 if [[ ! -f .env ]]; then
@@ -118,9 +113,9 @@ if [[ ! -f .env ]]; then
     /^JWT_REFRESH_SECRET=TROQUE/  { print "JWT_REFRESH_SECRET=" j2; next }
     { print }' .env > .env.tmp && mv .env.tmp .env
   sed -i "s#TROQUE_32_CHARS_EXATOS_0123456789#${ENC_KEY}#g" .env
-  sed -i "s#TROQUE_NO_PRIMEIRO_LOGIN#${ADMIN_PASSWORD}#g"   .env
-  sed -i "s#SEED_ADMIN_USERNAME=admin#SEED_ADMIN_USERNAME=${ADMIN_USERNAME}#g" .env
-  sed -i "s#admin@seudominio.com#${ADMIN_EMAIL}#g" .env
+  sed -i "s#^SEED_ADMIN_USERNAME=.*#SEED_ADMIN_USERNAME=${ADMIN_USERNAME}#g" .env
+  sed -i "s#^SEED_ADMIN_EMAIL=.*#SEED_ADMIN_EMAIL=${ADMIN_EMAIL}#g" .env
+  sed -i "s#^SEED_ADMIN_PASSWORD=.*#SEED_ADMIN_PASSWORD=${ADMIN_PASSWORD}#g" .env
 
   if [[ -n "$DOMAIN" ]]; then
     sed -i "s#painel.seudominio.com#${DOMAIN}#g" .env
@@ -156,6 +151,9 @@ if [[ ! -f .env ]]; then
   ok ".env gerado."
 else
   warn ".env já existe; mantendo."
+  sed -i "s#^SEED_ADMIN_USERNAME=.*#SEED_ADMIN_USERNAME=${ADMIN_USERNAME}#g" .env || true
+  sed -i "s#^SEED_ADMIN_EMAIL=.*#SEED_ADMIN_EMAIL=${ADMIN_EMAIL}#g" .env || true
+  sed -i "s#^SEED_ADMIN_PASSWORD=.*#SEED_ADMIN_PASSWORD=${ADMIN_PASSWORD}#g" .env || true
 fi
 
 if [[ -n "$EDGE_POSTGRES_ALLOWLIST" ]]; then
