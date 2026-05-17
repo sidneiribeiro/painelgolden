@@ -19,3 +19,5 @@ router.post('/import-painelmaster-dump', migrationController.importPainelmasterD
 
 // Corrigir billing dos resellers importados
 router.post('/fix-reseller-billing', migrationController.fixResellerBilling);
+
+export default router;
