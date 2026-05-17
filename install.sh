@@ -2,8 +2,7 @@
 # Xtream Novo — instalador oficial (Ubuntu 20.04/22.04/24.04 ou Debian 11/12)
 # Uso:
 #   sudo bash install.sh                                   # interativo
-#   sudo DOMAIN=x.com EMAIL=y@z.com bash install.sh --ssl  # automático com SSL
-# Flags: --non-interactive  --ssl  --no-nginx
+# Flags: --non-interactive  --no-nginx
 set -euo pipefail
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
@@ -17,7 +16,7 @@ APPLY_EDGE_ALLOWLIST=0
 for arg in "$@"; do
   case "$arg" in
     --non-interactive) NON_INTERACTIVE=1 ;;
-    --ssl) ENABLE_SSL=1 ;;
+    --ssl) warn "SSL desativado: o instalador roda somente em HTTP (ignorando --ssl)"; ENABLE_SSL=0 ;;
     --no-nginx) SKIP_NGINX=1 ;;
     --apply-edge-allowlist) APPLY_EDGE_ALLOWLIST=1 ;;
   esac
@@ -94,7 +93,6 @@ if [[ $APPLY_EDGE_ALLOWLIST -eq 1 ]]; then
 fi
 
 read_var DOMAIN         "Domínio público (ex.: painel.cliente.com)" ""
-read_var EMAIL          "Email para Let's Encrypt" ""
 read_var ADMIN_USERNAME "Usuário SUPER_ADMIN inicial" "admin"
 read_var ADMIN_EMAIL    "Email do SUPER_ADMIN" "admin@${DOMAIN:-painelmaster.local}"
 read_var ADMIN_PASSWORD "Senha SUPER_ADMIN (enter = aleatória)" ""
@@ -450,7 +448,6 @@ fi
 if command -v ufw >/dev/null 2>&1; then
   ufw allow OpenSSH >/dev/null 2>&1 || true
   ufw allow 80/tcp  >/dev/null 2>&1 || true
-  ufw allow 443/tcp >/dev/null 2>&1 || true
   if [[ -n "$EDGE_POSTGRES_ALLOWLIST" ]]; then
     IFS=',' read -r -a edge_ips <<<"$EDGE_POSTGRES_ALLOWLIST"
     for ip in "${edge_ips[@]}"; do
@@ -465,12 +462,7 @@ if command -v ufw >/dev/null 2>&1; then
   fi
 fi
 
-PUB_URL="${DOMAIN:+https://$DOMAIN}"
-if [[ -n "$DOMAIN" && $ENABLE_SSL -eq 1 ]]; then
-  if ! ss -lntp 2>/dev/null | grep -q ':443'; then
-    PUB_URL="http://$DOMAIN"
-  fi
-fi
+PUB_URL="${DOMAIN:+http://$DOMAIN}"
 PUB_URL="${PUB_URL:-http://$(curl -s ifconfig.me 2>/dev/null || echo 'SEU-IP')}"
 
 echo
