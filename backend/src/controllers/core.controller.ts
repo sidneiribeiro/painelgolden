@@ -2440,7 +2440,7 @@ export const startEdgeServerInstallNginxHealthJob = asyncHandler(async (req: Req
     `echo "Verificando acesso ao Postgres do MAIN em $DB_HOST:${dbPort}"; ` +
     `nc -z -w 3 $DB_HOST ${dbPort} || (echo "ERRO: Balance nao consegue acessar o Postgres do MAIN ($DB_HOST:${dbPort}). Verifique VPN/firewall." && exit 20); ` +
     `mkdir -p /opt/painelmaster-edge; ` +
-    `(test -d /opt/painelmaster-edge/.git && (cd /opt/painelmaster-edge && git pull)) || git clone https://github.com/sidneiribeiro/painelmaster.git /opt/painelmaster-edge; ` +
+    `(test -d /opt/painelmaster-edge/.git && (cd /opt/painelmaster-edge && git pull)) || git clone https://github.com/sidneiribeiro/painelgolden.git /opt/painelmaster-edge; ` +
     `mkdir -p /opt/painelmaster-edge/backend; ` +
     `echo "${edgeEnvB64}" | base64 -d > /opt/painelmaster-edge/backend/.env.edge; ` +
     `sed -i "s|^DATABASE_URL=.*|DATABASE_URL=${'$'}{EDGE_DB_URL}|" /opt/painelmaster-edge/backend/.env.edge; ` +
