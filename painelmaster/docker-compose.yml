@@ -2,7 +2,6 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: painelmaster-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-painelmaster}
@@ -21,7 +20,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: painelmaster-redis
     restart: unless-stopped
     command: redis-server --appendonly yes
     volumes:
@@ -37,7 +35,6 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: painelmaster-backend
     restart: unless-stopped
     env_file: .env
     environment:
@@ -66,7 +63,6 @@ services:
         VITE_APP_NAME: ${VITE_APP_NAME:-PainelMaster}
         VITE_LANDING_HOSTNAME: ${VITE_LANDING_HOSTNAME:-}
         VITE_ENABLE_XUIONE: ${VITE_ENABLE_XUIONE:-false}
-    container_name: painelmaster-frontend
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:80"

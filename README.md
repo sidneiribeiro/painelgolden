@@ -46,6 +46,7 @@ O instalador:
 ```bash
 cp .env.example .env
 # Edite .env: domínio, secrets (openssl rand -hex 32), credenciais admin
+# Dica: ajuste COMPOSE_PROJECT_NAME no .env para não conflitar com outros projetos no mesmo servidor
 docker compose build
 docker compose up -d
 ```
