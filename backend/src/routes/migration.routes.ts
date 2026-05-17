@@ -14,7 +14,8 @@ router.get('/status', migrationController.migrationStatus);
 // Importar painel PHP (dry-run por padrão)
 router.post('/import-php-panel', migrationController.importPhpPanel);
 
+// Importar dump PostgreSQL do PainelMaster (por filename na pasta de backups)
+router.post('/import-painelmaster-dump', migrationController.importPainelmasterDump);
+
 // Corrigir billing dos resellers importados
 router.post('/fix-reseller-billing', migrationController.fixResellerBilling);
-
-export default router;

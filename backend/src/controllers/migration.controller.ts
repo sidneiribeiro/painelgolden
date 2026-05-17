@@ -6,6 +6,7 @@ import { asyncHandler, AppError } from '../middleware/error.middleware.js';
 import { hashPassword } from '../utils/crypto.js';
 import { createLogger } from '../utils/logger.js';
 import { XUIDBClient } from '../services/xui.db.client.js';
+import { importPainelmasterDumpFromFile } from '../scripts/importPainelmasterDump.js';
 
 const logger = createLogger('MigrationController');
 
@@ -771,4 +772,17 @@ export const migrationStatus = asyncHandler(async (req: Request, res: Response) 
       totalTrials,
     },
   });
+});
+
+export const importPainelmasterDump = asyncHandler(async (req: Request, res: Response) => {
+  const dryRun = req.query.dryRun !== 'false';
+  const filename =
+    (typeof (req.body as any)?.filename === 'string' ? String((req.body as any).filename) : '') ||
+    (typeof (req.query as any)?.filename === 'string' ? String((req.query as any).filename) : '');
+
+  const clean = String(filename || '').trim();
+  if (!clean) throw new AppError(400, 'filename é obrigatório');
+
+  const data = await importPainelmasterDumpFromFile({ filename: clean, dryRun });
+  res.json({ success: true, dryRun, data });
 });
