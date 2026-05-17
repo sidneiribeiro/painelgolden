@@ -7,6 +7,7 @@ import { hashPassword } from '../utils/crypto.js';
 import { createLogger } from '../utils/logger.js';
 import { XUIDBClient } from '../services/xui.db.client.js';
 import { importPainelmasterDumpFromFile } from '../scripts/importPainelmasterDump.js';
+import { importCustomersCsvFromFile } from '../scripts/importCustomersCsv.js';
 
 const logger = createLogger('MigrationController');
 
@@ -784,5 +785,35 @@ export const importPainelmasterDump = asyncHandler(async (req: Request, res: Res
   if (!clean) throw new AppError(400, 'filename é obrigatório');
 
   const data = await importPainelmasterDumpFromFile({ filename: clean, dryRun });
+  res.json({ success: true, dryRun, data });
+});
+
+export const importCustomersCsv = asyncHandler(async (req: Request, res: Response) => {
+  const dryRun = req.query.dryRun !== 'false';
+  const filename =
+    (typeof (req.body as any)?.filename === 'string' ? String((req.body as any).filename) : '') ||
+    (typeof (req.query as any)?.filename === 'string' ? String((req.query as any).filename) : '');
+  const serverId = typeof (req.query as any)?.serverId === 'string' ? String((req.query as any).serverId) : '';
+
+  const clean = String(filename || '').trim();
+  if (!clean) throw new AppError(400, 'filename é obrigatório');
+  if (!serverId) throw new AppError(400, 'serverId é obrigatório');
+
+  const createMissingResellers = String((req.query as any)?.createMissingResellers || '').toLowerCase() === 'true';
+  const defaultExpiresDaysRaw = parseInt(String((req.query as any)?.defaultExpiresDays || '30'), 10);
+  const maxRowsRaw = parseInt(String((req.query as any)?.maxRows || '5000'), 10);
+
+  const defaultExpiresDays = Number.isFinite(defaultExpiresDaysRaw) && defaultExpiresDaysRaw > 0 ? defaultExpiresDaysRaw : 30;
+  const maxRows = Number.isFinite(maxRowsRaw) && maxRowsRaw > 0 ? maxRowsRaw : 5000;
+
+  const data = await importCustomersCsvFromFile({
+    filename: clean,
+    serverId,
+    dryRun,
+    createMissingResellers,
+    defaultExpiresDays,
+    maxRows,
+  });
+
   res.json({ success: true, dryRun, data });
 });

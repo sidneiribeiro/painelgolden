@@ -17,6 +17,9 @@ router.post('/import-php-panel', migrationController.importPhpPanel);
 // Importar dump PostgreSQL do PainelMaster (por filename na pasta de backups)
 router.post('/import-painelmaster-dump', migrationController.importPainelmasterDump);
 
+// Importar clientes via CSV (por filename na pasta de backups)
+router.post('/import-customers-csv', migrationController.importCustomersCsv);
+
 // Corrigir billing dos resellers importados
 router.post('/fix-reseller-billing', migrationController.fixResellerBilling);
 
