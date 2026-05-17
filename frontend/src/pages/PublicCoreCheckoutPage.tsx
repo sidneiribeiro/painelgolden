@@ -81,6 +81,7 @@ export function PublicCoreCheckoutPage({ resellerOverride }: { resellerOverride?
   const reseller = resellerOverride || params.reseller;
   const location = useLocation();
   const [loading, setLoading] = useState(true);
+  const [resolvedReseller, setResolvedReseller] = useState<string>('');
   const [packages, setPackages] = useState<PublicCorePackage[]>([]);
   const [branding, setBranding] = useState<PublicCoreBrandingResponse['data'] | null>(null);
   const [selectedPackageId, setSelectedPackageId] = useState<string>('');
@@ -132,25 +133,37 @@ export function PublicCoreCheckoutPage({ resellerOverride }: { resellerOverride?
   }, [effectiveStatus]);
 
   useEffect(() => {
-    if (!reseller) return;
+    let alive = true;
     const run = async () => {
       setLoading(true);
       try {
-        const [packagesRes, brandingRes] = await Promise.all([
-          api.get<PublicCorePackagesResponse>(`/public/core/${encodeURIComponent(reseller)}/packages`),
-          api.get<PublicCoreBrandingResponse>(`/public/core/${encodeURIComponent(reseller)}/branding`),
-        ]);
+        const [packagesRes, brandingRes] = reseller
+          ? await Promise.all([
+              api.get<PublicCorePackagesResponse>(`/public/core/${encodeURIComponent(reseller)}/packages`),
+              api.get<PublicCoreBrandingResponse>(`/public/core/${encodeURIComponent(reseller)}/branding`),
+            ])
+          : await Promise.all([
+              api.get<PublicCorePackagesResponse>(`/public/core/packages`),
+              api.get<PublicCoreBrandingResponse>(`/public/core/branding`),
+            ]);
         const pkgs = packagesRes.data.data.packages || [];
+        if (!alive) return;
         setPackages(pkgs);
         setSelectedPackageId(pkgs.find((p) => p.id)?.id || '');
         setBranding(brandingRes.data.data);
+        if (!reseller) setResolvedReseller(brandingRes.data.data?.reseller || packagesRes.data.data?.reseller || '');
       } catch (e: any) {
+        if (!alive) return;
         toast.error(e.response?.data?.error || 'Erro ao carregar pacotes');
       } finally {
+        if (!alive) return;
         setLoading(false);
       }
     };
     run();
+    return () => {
+      alive = false;
+    };
   }, [reseller]);
 
   useEffect(() => {
@@ -191,18 +204,22 @@ export function PublicCoreCheckoutPage({ resellerOverride }: { resellerOverride?
     }
   }, [effectivePixQrCode]);
 
+  const effectiveReseller = reseller || resolvedReseller;
+
   const onCreate = async () => {
-    if (!reseller) return;
+    if (!effectiveReseller) return;
     if (!selectedPackageId) {
       toast.error('Selecione um pacote');
       return;
     }
     setCreating(true);
     try {
-      const res = await api.post<PublicCoreCheckoutCreateResponse>(`/public/core/${encodeURIComponent(reseller)}/checkout`, {
+      const normalizedPhone = normalizeBrPhone(customerPhone || '');
+      const url = reseller ? `/public/core/${encodeURIComponent(reseller)}/checkout` : `/public/core/checkout`;
+      const res = await api.post<PublicCoreCheckoutCreateResponse>(url, {
         packageId: selectedPackageId,
         customerName: customerName || undefined,
-        customerPhone: customerPhone || undefined,
+        customerPhone: normalizedPhone || undefined,
       });
       setCheckout(res.data);
       setCheckoutToken(res.data.checkoutToken);
@@ -226,12 +243,14 @@ export function PublicCoreCheckoutPage({ resellerOverride }: { resellerOverride?
     );
   }
 
-  if (!reseller) {
+  if (!effectiveReseller) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-zinc-100 dark:bg-zinc-950 p-4">
         <Card className="max-w-md w-full p-6 text-center">
-          <h1 className="text-2xl font-bold text-red-600 dark:text-red-400 mb-4">Link inválido</h1>
-          <p className="text-zinc-600 dark:text-zinc-400">Revenda não informada.</p>
+          <h1 className="text-2xl font-bold text-red-600 dark:text-red-400 mb-4">Revenda não encontrada</h1>
+          <p className="text-zinc-600 dark:text-zinc-400">
+            Este domínio ainda não foi configurado no painel.
+          </p>
         </Card>
       </div>
     );
@@ -247,7 +266,7 @@ export function PublicCoreCheckoutPage({ resellerOverride }: { resellerOverride?
             </div>
           ) : null}
           <h1 className="text-3xl font-bold text-zinc-900 dark:text-white">{branding?.panelName || 'Assinatura IPTV'}</h1>
-          <p className="text-zinc-600 dark:text-zinc-400 mt-2">Revenda: {branding?.reseller || reseller}</p>
+          <p className="text-zinc-600 dark:text-zinc-400 mt-2">Revenda: {branding?.reseller || effectiveReseller}</p>
         </div>
 
         <Card className="p-6">

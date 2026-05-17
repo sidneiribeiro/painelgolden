@@ -37,4 +37,8 @@ router.post('/core/:reseller/checkout', publicCoreCheckoutCreateLimiter, asyncHa
 router.get('/core/checkout/:token', publicCoreCheckoutStatusLimiter, asyncHandler(getCoreCheckoutStatus));
 router.post('/core/checkout/:token/recreate-pix', publicCoreCheckoutCreateLimiter, asyncHandler(recreateCoreCheckoutPix));
 
+router.get('/core/packages', asyncHandler(listPublicCorePackages));
+router.get('/core/branding', asyncHandler(getPublicCoreBranding));
+router.post('/core/checkout', publicCoreCheckoutCreateLimiter, asyncHandler(initiateCoreCheckout));
+
 export default router;

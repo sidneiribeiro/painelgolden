@@ -282,6 +282,46 @@ function getBaseUrl(req: Request) {
   return `${proto}://${host}`;
 }
 
+async function resolveCoreResellerUser(req: Request) {
+  const resellerParam = String(req.params.reseller || '').trim();
+  const resellerQuery = typeof req.query.reseller === 'string' ? req.query.reseller.trim() : '';
+  const reseller = resellerParam || resellerQuery;
+
+  if (reseller) {
+    const user = await prisma.user.findFirst({
+      where: { username: reseller },
+      select: { id: true, username: true },
+    });
+    if (!user) throw new AppError(404, 'Revenda não encontrada');
+    return user;
+  }
+
+  const rawHost = String(req.headers['x-forwarded-host'] || req.headers.host || '').trim();
+  const hostOnly = rawHost.replace(/:\d+$/, '').toLowerCase();
+  const candidates = [hostOnly, hostOnly.startsWith('www.') ? hostOnly.slice(4) : ''].filter(Boolean);
+
+  for (const h of candidates) {
+    const settings = await prisma.panelSettings.findFirst({
+      where: {
+        publicBaseUrl: {
+          contains: `//${h}`,
+          mode: 'insensitive',
+        },
+      },
+      select: { userId: true },
+    });
+    if (!settings?.userId) continue;
+
+    const user = await prisma.user.findUnique({
+      where: { id: settings.userId },
+      select: { id: true, username: true },
+    });
+    if (user) return user;
+  }
+
+  throw new AppError(404, 'Revenda não encontrada');
+}
+
 function signCoreCheckoutToken(paymentId: string) {
   const sig = crypto.createHmac('sha256', env.JWT_SECRET).update(paymentId).digest('base64url');
   return `${paymentId}.${sig}`;
@@ -305,14 +345,7 @@ function verifyCoreCheckoutToken(token: string) {
 }
 
 export const listPublicCorePackages = asyncHandler(async (req: Request, res: Response) => {
-  const reseller = String(req.params.reseller || '').trim();
-  if (!reseller) throw new AppError(400, 'Revenda inválida');
-
-  const user = await prisma.user.findFirst({
-    where: { username: reseller },
-    select: { id: true, username: true },
-  });
-  if (!user) throw new AppError(404, 'Revenda não encontrada');
+  const user = await resolveCoreResellerUser(req);
 
   const packages = await prisma.corePackage.findMany({
     where: { ownerId: user.id, isActive: true },
@@ -331,14 +364,7 @@ export const listPublicCorePackages = asyncHandler(async (req: Request, res: Res
 });
 
 export const getPublicCoreBranding = asyncHandler(async (req: Request, res: Response) => {
-  const reseller = String(req.params.reseller || '').trim();
-  if (!reseller) throw new AppError(400, 'Revenda inválida');
-
-  const user = await prisma.user.findFirst({
-    where: { username: reseller },
-    select: { id: true, username: true },
-  });
-  if (!user) throw new AppError(404, 'Revenda não encontrada');
+  const user = await resolveCoreResellerUser(req);
 
   const settings = await prisma.panelSettings.findUnique({
     where: { userId: user.id },
@@ -356,17 +382,10 @@ export const getPublicCoreBranding = asyncHandler(async (req: Request, res: Resp
 });
 
 export const initiateCoreCheckout = asyncHandler(async (req: Request, res: Response) => {
-  const reseller = String(req.params.reseller || '').trim();
-  if (!reseller) throw new AppError(400, 'Revenda inválida');
-
   const { packageId, customerName, customerPhone } = req.body || {};
   if (!packageId) throw new AppError(400, 'Campos obrigatórios: packageId');
 
-  const user = await prisma.user.findFirst({
-    where: { username: reseller },
-    select: { id: true, username: true },
-  });
-  if (!user) throw new AppError(404, 'Revenda não encontrada');
+  const user = await resolveCoreResellerUser(req);
 
   const pkg = await prisma.corePackage.findFirst({
     where: { id: String(packageId), ownerId: user.id, isActive: true },
