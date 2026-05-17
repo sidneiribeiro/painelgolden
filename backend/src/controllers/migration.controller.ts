@@ -8,6 +8,7 @@ import { createLogger } from '../utils/logger.js';
 import { XUIDBClient } from '../services/xui.db.client.js';
 import { importPainelmasterDumpFromFile } from '../scripts/importPainelmasterDump.js';
 import { importCustomersCsvFromFile } from '../scripts/importCustomersCsv.js';
+import { importCoreStreamsCsvFromFile } from '../scripts/importCoreStreamsCsv.js';
 
 const logger = createLogger('MigrationController');
 
@@ -815,5 +816,25 @@ export const importCustomersCsv = asyncHandler(async (req: Request, res: Respons
     maxRows,
   });
 
+  res.json({ success: true, dryRun, data });
+});
+
+export const importCoreStreamsCsv = asyncHandler(async (req: Request, res: Response) => {
+  const dryRun = req.query.dryRun !== 'false';
+  const filename =
+    (typeof (req.body as any)?.filename === 'string' ? String((req.body as any).filename) : '') ||
+    (typeof (req.query as any)?.filename === 'string' ? String((req.query as any).filename) : '');
+
+  const clean = String(filename || '').trim();
+  if (!clean) throw new AppError(400, 'filename é obrigatório');
+
+  const maxRowsRaw = parseInt(String((req.query as any)?.maxRows || '5000'), 10);
+  const maxRows = Number.isFinite(maxRowsRaw) && maxRowsRaw > 0 ? maxRowsRaw : 5000;
+
+  const createBouquets = String((req.query as any)?.createBouquets || '').toLowerCase() !== 'false';
+  const ownerId = (req as any).user?.id as string;
+  if (!ownerId) throw new AppError(401, 'Não autenticado');
+
+  const data = await importCoreStreamsCsvFromFile({ filename: clean, ownerId, dryRun, maxRows, createBouquets });
   res.json({ success: true, dryRun, data });
 });

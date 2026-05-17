@@ -20,6 +20,9 @@ router.post('/import-painelmaster-dump', migrationController.importPainelmasterD
 // Importar clientes via CSV (por filename na pasta de backups)
 router.post('/import-customers-csv', migrationController.importCustomersCsv);
 
+// Importar canais (Core Streams) via CSV (por filename na pasta de backups)
+router.post('/import-core-streams-csv', migrationController.importCoreStreamsCsv);
+
 // Corrigir billing dos resellers importados
 router.post('/fix-reseller-billing', migrationController.fixResellerBilling);
 
