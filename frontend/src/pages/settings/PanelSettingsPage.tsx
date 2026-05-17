@@ -273,13 +273,13 @@ export function PanelSettingsPage() {
       <Card className="p-6">
         <h2 className="text-lg font-semibold text-zinc-900 dark:text-white mb-4">Domínio da Revenda</h2>
         <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
-          URL base usada para gerar links públicos (checkout e envio de acesso via WhatsApp). Exemplo: https://revenda.seudominio.com
+          URL base usada para gerar links públicos (checkout e envio de acesso via WhatsApp). Exemplo: http://revenda.seudominio.com
         </p>
         <div className="flex gap-3">
           <Input
             value={publicBaseUrl}
             onChange={(e) => setPublicBaseUrl(e.target.value)}
-            placeholder="https://revenda.seudominio.com"
+            placeholder="http://revenda.seudominio.com"
             className="flex-1"
             maxLength={200}
           />

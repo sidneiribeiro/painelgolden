@@ -187,7 +187,7 @@ done
 if [[ $SKIP_NGINX -eq 0 ]]; then
   log "Configurando nginx..."
   apt-get install -y nginx
-  SERVER_NAME="${DOMAIN:-_}"
+  SERVER_NAME="_"
   cat > /etc/nginx/sites-available/painelmaster <<NGINX
 map \$http_upgrade \$connection_upgrade {
     default upgrade;

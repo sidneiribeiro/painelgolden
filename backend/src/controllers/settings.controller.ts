@@ -79,6 +79,28 @@ export const getPublicPanelSettings = asyncHandler(async (req: Request, res: Res
     }
   }
 
+  const rawHost = String(req.headers['x-forwarded-host'] || req.headers.host || '').trim();
+  const hostOnly = rawHost.replace(/:\d+$/, '').toLowerCase();
+  const candidates = [hostOnly, hostOnly.startsWith('www.') ? hostOnly.slice(4) : ''].filter(Boolean);
+
+  for (const h of candidates) {
+    const byHost = await prisma.panelSettings.findFirst({
+      where: {
+        publicBaseUrl: {
+          contains: `//${h}`,
+          mode: 'insensitive',
+        },
+      },
+    });
+    if (byHost) {
+      res.json({
+        success: true,
+        data: byHost,
+      });
+      return;
+    }
+  }
+
   // Busca configurações do SUPER_ADMIN para usar como padrão na tela de login
   const superAdmin = await prisma.user.findFirst({
     where: { role: 'SUPER_ADMIN' },
@@ -154,13 +176,14 @@ export const updatePublicBaseUrl = asyncHandler(async (req: Request, res: Respon
   let normalized: string | null = null;
   if (value) {
     try {
-      const url = new URL(value);
-      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      const maybeUrl = value.match(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//) ? value : `http://${value}`;
+      const url = new URL(maybeUrl);
+      if (url.protocol !== 'http:') {
         throw new Error('invalid protocol');
       }
-      normalized = `${url.protocol}//${url.host}`;
+      normalized = `http://${url.host}`;
     } catch {
-      throw new AppError('publicBaseUrl deve ser uma URL válida (ex: https://revenda.seudominio.com)', 400);
+      throw new AppError('publicBaseUrl deve ser uma URL HTTP válida (ex: http://revenda.seudominio.com)', 400);
     }
   }
 
